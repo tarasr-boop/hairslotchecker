@@ -103,4 +103,8 @@ def run_checks():
         print("No dates found.")
 
 if __name__ == "__main__":
+    # FORCE A TEST MESSAGE
+    send_notification("✅ TEST: The bot is working and connected!") 
+    
+    # Run the real check
     run_checks()
