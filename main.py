@@ -15,9 +15,11 @@ RECIPIENT_IDS = [
 BUSINESS_ID = "8ab07528-c2a9-463d-a441-3e0aa39a975e"
 STAFF_ID = "339008" 
 
+# UPDATED: Added ":SV" to match the screenshots exactly. 
+# This ensures the system recognizes the distinct duration for each.
 SERVICES_TO_CHECK = {
-    "💇‍♂️ Short hair (1 hour)": "1802687", 
-    "🦁 Curly hair (1.5 hours)": "1802702"
+    "💇‍♂️ Short hair (1 hour)": "1802687:SV", 
+    "🦁 Curly hair (1.5 hours)": "1802702:SV"
 }
 
 def send_notification(message):
@@ -32,14 +34,13 @@ def send_notification(message):
 def get_specific_times(date_str, service_id):
     """
     Hits the specific endpoint to get hours for a single day.
-    CRITICAL: We pass the service_id so the server knows the duration!
     """
     url = "https://book.gettimely.com/booking/gettimeslots"
     params = {
         "obg": BUSINESS_ID,
         "dateSelected": date_str,
-        "staffId": STAFF_ID,      # Specific Staff (Taras)
-        "serviceIds": service_id, # Specific Service (Calculates duration)
+        "staffId": STAFF_ID,      
+        "serviceIds": service_id, # Now passes "ID:SV"
         "tzId": "57"
     }
     
@@ -61,8 +62,6 @@ def get_specific_times(date_str, service_id):
         if unique_times:
             return ", ".join(unique_times)
         
-        # If no times found (but the date was open), it might be fully booked 
-        # for this specific large service, or the slot is too small.
         return "No fitting slots"
         
     except Exception as e:
@@ -109,7 +108,8 @@ def run_checks():
     for service_name, service_id in SERVICES_TO_CHECK.items():
         print(f"\n🔎 Checking {service_name}...")
         
-        for i in range(4): 
+        # UPDATED: Range set to 3 (Current month + next 2)
+        for i in range(3): 
             target_month = today.month + i
             target_year = today.year
             if target_month > 12:
@@ -120,13 +120,18 @@ def run_checks():
             dummy_date = datetime.date(target_year, target_month, 1)
             month_name = dummy_date.strftime("%B")
 
+            # UPDATED: Explicitly skip April
+            if month_name == "April":
+                print(f"   Skipping {month_name}...")
+                continue
+
             dates = check_service_month(target_year, target_month, service_id)
             
             if dates:
                 print(f"   Found {len(dates)} days in {month_name}")
                 
                 for d_str in dates:
-                    # 1. Get exact times (PASSING SERVICE ID NOW)
+                    # 1. Get exact times
                     time_str = get_specific_times(d_str, service_id)
                     
                     if time_str == "No fitting slots":
@@ -154,14 +159,13 @@ def run_checks():
             final_msg += f"<b>{service}</b>\n"
             
             for month, entries in months_data.items():
-                final_msg += f"\n📅 <b>{month}:</b>\n"
-                
-                # Filter out "Nothing" if there are real entries for that month
+                # Skip showing months with only "Nothing" to keep message clean
                 real_entries = [e for e in entries if e != "Nothing"]
-                if real_entries:
-                    final_msg += "\n".join(real_entries) + "\n"
-                else:
-                    final_msg += "Nothing\n"
+                if not real_entries:
+                    continue
+                    
+                final_msg += f"\n📅 <b>{month}:</b>\n"
+                final_msg += "\n".join(real_entries) + "\n"
         
         final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
         
