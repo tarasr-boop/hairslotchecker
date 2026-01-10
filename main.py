@@ -220,18 +220,33 @@ def run_checks():
         time.sleep(1)
 
     # --- FINAL MESSAGE CONSTRUCTION ---
-    final_msg = "🚨 <b>Update</b>\n"
+    final_msg = "💈 <b>Hair by Taras</b> — New Slots\n"
     
     for service, months_data in results.items():
-        final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service}</b>\n"
+        # Add emoji based on service name
+        emoji = "💇‍♂️" if "Short" in service else "🦁"
+        final_msg += f"\n<b>{emoji} {service}</b>\n"
+        final_msg += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+        
         for month, entries in months_data.items():
             if should_skip_april(month):
                 continue
             
             if entries:
-                final_msg += f"\n📅 <b>{month}:</b>\n" + "\n".join(entries) + "\n"
+                if entries == ["Nothing"]:
+                    final_msg += f"📅 <b>{month}:</b> —\n"
+                else:
+                    final_msg += f"📅 <b>{month}:</b>\n"
+                    for entry in entries:
+                        # Convert "• 18 February: 11:00AM" to "   → 18 Feb @ 11:00AM"
+                        clean_entry = entry.replace("• ", "   → ").replace(": ", " @ ")
+                        # Shorten month names
+                        for full_month in ["January", "February", "March", "April", "May", "June", 
+                                          "July", "August", "September", "October", "November", "December"]:
+                            clean_entry = clean_entry.replace(full_month, full_month[:3])
+                        final_msg += f"{clean_entry}\n"
 
-    final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
+    final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Book Your Appointment</a>"
     
     # Send notification always (to confirm the scheduler is running)
     send_notification(final_msg)
