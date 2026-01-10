@@ -51,80 +51,73 @@ rate_limit_lock = Lock()
 
 # Esoteric one-liners
 ESOTERIC_LINES = [
-    "The stars have aligned. Your split ends have not.",
-    "Mercury is in retrograde. Your hair is in disgrace.",
-    "The ancient scrolls speak of a prophecy: you need a trim.",
-    "Your aura is immaculate. Your hair, however, is chaotic.",
-    "The universe whispers: 'Book the appointment.'",
-    "Your chakras are balanced. Your layers are not.",
-    "The moon is waxing. Your hair should be waning.",
-    "I consulted the tarot. The cards said 'scissors.'",
-    "The oracle has spoken. It said 'barber. Now.'",
-    "Your third eye sees all. It sees that you need a cut.",
-    "The cosmos have a message: your ends are split.",
-    "Venus governs beauty. She's filed a complaint about your hair.",
-    "The tea leaves have settled. They spell 'H-A-I-R-C-U-T.'",
-    "Your spirit guide appeared. It was holding clippers.",
-    "The pendulum swings toward 'yes, get a trim.'",
-    "Saturn returns every 29 years. Your haircut is overdue by 3 months.",
-    "The runes are clear: ᚺᚨᛁᚱᚲᚢᛏ (that's 'haircut' in Elder Futhark).",
+    # Mostly "yes, get a haircut"
+    "The stars are tired of dodging your split ends—go bless them with a trim.",
+    "Your aura is glowing, but your hair karma needs a reset. Say yes to the scissors.",
+    "The universe just refreshed your timeline: this episode features a haircut.",
+    "Even the Buddha let go of attachment; you can let go of two centimeters.",
+    "The oracle sighed, rolled its eyes, and pointed at the nearest barber.",
+    "Your crown chakra is online; your crown of hair needs a patch update.",
+    "The cosmic DJ just skipped the track called 'Overgrown.' Time for a remix cut.",
+    # Mostly "no, don't do it"
+    "The moon and your hair are finally in sync—do not disturb this fragile harmony.",
+    "The runes mutter, 'Not today.' Keep the hair; change the attitude.",
+    "Your mane is a living record of your journey. The cosmos says: observe, don’t edit.",
+    "The Gita whispers: sometimes inaction is the highest action—step away from the clippers.",
+    # Vague / koan-style
+    "When the student is ready, the barber appears.",
+    "Ask not if you should cut your hair; ask if your hair is ready to release you.",
+    "Watts would remind you: you are the dance, not the fringe. Interpret that as you will.",
+    "The universe sent you this question instead of an answer. That is the answer.",
 ]
 
-# Witty one-liners
 WITTY_LINES = [
-    "Your hair called. It wants a divorce.",
-    "I've seen better hair on a coconut.",
-    "Your hair has more issues than a magazine stand.",
-    "That's not a hairstyle, that's a cry for help.",
-    "Your hair looks like it lost a fight with a lawnmower.",
-    "Is that a hairstyle or a social experiment?",
-    "Your hair has given up. Maybe you should too. On the hair.",
-    "I'm not saying your hair is bad, but birds are circling it.",
-    "Your hair is a 'before' photo that never got an 'after.'",
-    "That hair could be used as evidence in court.",
-    "Your hair is what happens when you skip the tutorial.",
-    "I've seen tidier haystacks.",
-    "Your hair looks like it's buffering.",
-    "Is your hair a statement? Because it's saying 'help me.'",
-    "Your hair has the energy of a forgotten houseplant.",
-    "That's not bed head. That's bed, floor, and dumpster head.",
-    "Your hair is giving 'I woke up like this' but not in a good way.",
+    # Mostly "yes, get a haircut"
+    "This isn’t a hairstyle, it’s a plot twist—go get the director’s cut.",
+    "Your hair looks like a prequel nobody asked for. Greenlight the reboot.",
+    "If your hair had a LinkedIn, it would be 'seeking a sharp corrective action.'",
+    "Your reflection just tried to file an HR complaint. Schedule a trim before it escalates.",
+    "That much volume should come with a noise warning. Turn it down at the barber.",
+    "Your hair’s doing improv. Time for a tightly scripted fade.",
+    "The only thing holding you back is gravity and about three extra centimeters.",
+    # Mostly "no, don’t get a haircut"
+    "It’s so bad it’s iconic now—don’t cut it, just start charging appearance fees.",
+    "Your hair is a social experiment; stopping now would ruin the data set.",
+    "Honestly, this level of chaos can’t be bought. Keep it, you limited-edition disaster.",
+    "Your friends need something to roast. Be generous. Skip the barber today.",
+    # Vague / shruggy
+    "Is it art or an accident? Only a barber visit will collapse the waveform.",
+    "Your hair is one haircut away from greatness or regret. Feeling lucky?",
+    "This could be 'before' or 'after'—depends whether you walk past the shop.",
+    "Flip a coin: heads, haircut; tails, radical self-acceptance.",
 ]
 
-# Consulting one-liners
 CONSULTING_LINES = [
-    "Per my last email, your hair requires immediate strategic intervention.",
-    "Let's take this offline—your split ends need a private consultation.",
-    "I'll need to loop in the scissors on this one.",
-    "Your hair's ROI is diminishing. Time to pivot.",
-    "Let's circle back when your roots aren't showing.",
-    "This is a high-priority follicle situation. Escalate immediately.",
-    "Your current style lacks synergy. Consider a trim.",
-    "We need to align your hair with Q4 objectives.",
-    "I'm seeing some bandwidth issues with your current length.",
-    "Your hair is giving 'scope creep.' Rein it in.",
-    "The deliverables are clear: you need a cut.",
-    "I've done the due diligence. The recommendation is: scissors.",
-    "Your hair has exceeded its sprint capacity. Time to groom the backlog.",
-    "Let's not boil the ocean—just trim the ends.",
-    "Your follicles are misaligned with stakeholder expectations.",
-    "We need to rightsize your hair situation.",
-    "Your hair's burn rate is unsustainable. Cut costs. Literally.",
-    "I'm flagging this as a blocker. The blocker is your hair.",
-    "Let's leverage our core competencies here: booking appointments.",
-    "Your hair is technical debt. Time to refactor.",
-    "You're one haircut away from thought leadership.",
-    "I've benchmarked your hair against industry standards. It's lagging.",
-    "This is a change management issue. The change is: shorter hair.",
-    "The SWOT analysis is complete. Your hair is a weakness.",
-    "Let's action this: book the appointment.",
-    "Time to sunset your current hairstyle.",
-    "Let's move the needle here. The needle is scissors.",
+    # Mostly "yes, get a haircut"
+    "Executive summary: immediate haircut recommended to realign brand perception.",
+    "After a thorough review, the steering committee endorses a short-back-and-sides.",
+    "Your hair has exceeded scope and budget. Approve the cut or accept the write‑off.",
+    "Risk register updated: overgrown hair is now a critical issue. Mitigate with scissors.",
+    "Our slide 37 takeaway: you’re one haircut away from looking billable.",
+    "Scenario analysis shows the 'no haircut' case underperforms in all markets.",
+    "We’ve benchmarked top performers. Spoiler: none have that much fringe.",
+    # Mostly "no, don’t get a haircut"
+    "Your current look is deeply off‑brand, but at least it’s differentiated—recommend deferring the cut.",
+    "Sunk cost of growing this out is significant; hold and reassess next quarter.",
+    "Your hair is delivering peak stakeholder amusement. Do not cannibalize that value with a trim.",
+    "Status: messy but memorable. Recommend maintaining current state for brand recognition.",
+    # Vague / consulting-non-answer
+    "Let’s park the haircut decision and gather more mirror data.",
+    "From a change-management lens, the real question is whether *you* are haircut‑ready.",
+    "We’re not saying yes or no; we’re suggesting a facilitated workshop with your barber.",
+    "It depends on your north-star metric: confidence, convenience, or chaos.",
 ]
 
-# Combine and shuffle all one-liners
+import random
 HAIRCUT_ADVICE = ESOTERIC_LINES + WITTY_LINES + CONSULTING_LINES
 random.shuffle(HAIRCUT_ADVICE)
+
+
 
 # Session for appointment checking
 session = requests.Session()
