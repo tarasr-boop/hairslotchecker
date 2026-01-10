@@ -15,7 +15,6 @@ RECIPIENT_IDS = [
 BUSINESS_ID = "8ab07528-c2a9-463d-a441-3e0aa39a975e"
 STAFF_ID = "339008" 
 
-# These IDs include the :SV suffix which is CRITICAL for duration (1h vs 1.5h)
 SERVICES_TO_CHECK = {
     "💇‍♂️ Short hair (1 hour)": "1802687:SV", 
     "🦁 Curly hair (1.5 hours)": "1802702:SV"
@@ -30,73 +29,54 @@ def send_notification(message):
         except Exception as e:
             print(f"Msg fail: {e}")
 
+# --- NEW: SESSION SETUP ---
+# We use a session to persist cookies and headers, making the bot look like a real browser user.
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Referer": "https://bookings.gettimely.com/hairbytaras/book",
+    "Origin": "https://bookings.gettimely.com",
+    "X-Requested-With": "XMLHttpRequest"
+})
+
 def get_specific_times(date_str, service_id):
-    """
-    Hits the specific endpoint to get hours for a single day.
-    We send the ID in multiple parameter slots to ensure the server respects the duration.
-    """
     url = "https://book.gettimely.com/booking/gettimeslots"
     params = {
         "obg": BUSINESS_ID,
         "dateSelected": date_str,
-        "staffId": STAFF_ID,      
-        
-        # WE SEND BOTH PARAMETERS TO BE SAFE:
-        # 1. Standard API filter
-        "serviceIds": service_id, 
-        # 2. Form input name (just in case)
+        "staffId": STAFF_ID,
+        # Using the exact parameter name from your HTML
         "BookableTimeSlotItemIds": service_id,
-        
         "tzId": "57"
-    }
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
-        "X-Requested-With": "XMLHttpRequest",
-        "Accept": "*/*"
     }
 
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = session.get(url, params=params, timeout=10)
         
-        # Regex to find times like "11:00am", "11:00 am", "11:00 PM"
         times = re.findall(r'\d{1,2}:\d{2}\s*(?:am|pm)', response.text, re.IGNORECASE)
         unique_times = sorted(list(set(times)))
         
         if unique_times:
             return ", ".join(unique_times)
-        
         return "No fitting slots"
-        
     except Exception as e:
-        print(f"Error getting times for {date_str}: {e}")
+        print(f"Error times {date_str}: {e}")
         return "Time unknown"
 
 def check_service_month(year, month, service_id):
-    """
-    Checks which DAYS have availability.
-    """
     url = "https://book.gettimely.com/Booking/GetOpenDates"
     params = {
         "obg": BUSINESS_ID,
         "month": month,
         "year": year,
         "staffId": STAFF_ID,
-        
-        # Send both variations here too to ensure the CALENDAR filters correctly
-        "serviceIds": service_id, 
         "BookableTimeSlotItemIds": service_id,
-        
         "tzId": "57"
-    }
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
-        "X-Requested-With": "XMLHttpRequest",
-        "Accept": "application/json"
     }
 
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = session.get(url, params=params, timeout=10)
         data = response.json()
         
         found_dates = []
@@ -106,11 +86,11 @@ def check_service_month(year, month, service_id):
                     found_dates.append(item["day"])
         return found_dates
     except Exception as e:
-        print(f"Error checking {year}-{month}: {e}")
+        print(f"Error month {year}-{month}: {e}")
         return []
 
 def run_checks():
-    print("--- Starting Check ---")
+    print("--- Starting Session Check ---")
     today = datetime.date.today()
     
     results = defaultdict(lambda: defaultdict(list))
@@ -119,56 +99,47 @@ def run_checks():
     for service_name, service_id in SERVICES_TO_CHECK.items():
         print(f"\n🔎 Checking {service_name}...")
         
+        # CLEAR COOKIES between services to ensure no "cross-contamination" of service IDs
+        session.cookies.clear()
+
         # Check Today + Next 2 Months (Total 3)
         for i in range(3): 
             target_month = today.month + i
             target_year = today.year
-            
-            # Handle year rollover
             if target_month > 12:
                 target_month -= 12
                 target_year += 1
             
-            # Get Month Name
             dummy_date = datetime.date(target_year, target_month, 1)
             month_name = dummy_date.strftime("%B")
 
-            # --- STRICT APRIL BLOCK ---
+            # SKIP APRIL
             if month_name == "April":
                 continue
-            # --------------------------
 
             dates = check_service_month(target_year, target_month, service_id)
             
             if dates:
                 print(f"   Found {len(dates)} days in {month_name}")
-                
                 for d_str in dates:
                     d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
-
-                    # Double Check: Ensure date is not in April (spillover check)
+                    
+                    # Date spillover check
                     if d_obj.month == 4:
                         continue
 
-                    # 1. Get exact times
                     time_str = get_specific_times(d_str, service_id)
                     
                     if time_str == "No fitting slots":
                         continue
 
                     has_found_any = True
-                    
-                    # 2. Format nice date
                     nice_date = d_obj.strftime("%d %B")
-                    
                     entry = f"• {nice_date}: {time_str}"
                     
-                    # Store data under the actual month of the slot
                     actual_month_name = d_obj.strftime("%B")
-                    
-                    if actual_month_name != "April": 
+                    if actual_month_name != "April":
                         results[service_name][actual_month_name].append(entry)
-                    
                     time.sleep(0.5)
             else:
                 if month_name != "April":
@@ -178,27 +149,20 @@ def run_checks():
 
     if has_found_any:
         final_msg = "🚨 <b>HAIR BY TARAS UPDATE</b>\n"
-        
         for service, months_data in results.items():
-            final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n"
-            final_msg += f"<b>{service}</b>\n"
-            
+            final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service}</b>\n"
             for month, entries in months_data.items():
                 if month == "April": continue
-
+                
                 real_entries = [e for e in entries if e != "Nothing"]
-                if not real_entries:
-                    continue
-                    
-                final_msg += f"\n📅 <b>{month}:</b>\n"
-                final_msg += "\n".join(real_entries) + "\n"
+                if real_entries:
+                    final_msg += f"\n📅 <b>{month}:</b>\n" + "\n".join(real_entries) + "\n"
         
         final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
-        
         send_notification(final_msg)
         print("Notification sent!")
     else:
-        print("\nNo dates found (Silence).")
+        print("\nNo dates found.")
 
 if __name__ == "__main__":
     run_checks()
