@@ -7,6 +7,7 @@ from collections import defaultdict
 import pytz
 import random
 from threading import Thread
+from flask import Flask # NEW IMPORT
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -17,8 +18,8 @@ BUSINESS_ID = "8ab07528-c2a9-463d-a441-3e0aa39a975e"
 STAFF_ID = "339008"
 
 SERVICES_TO_CHECK = {
-    "Short hair (1 hour)": "1802687:SV",
-    "Long hair (1.5 hours)": "1802702:SV"
+    "👦 Short hair (1 hour)": "1802687:SV",
+    "👧 Long hair (1.5 hours)": "1802702:SV"
 }
 
 # Melbourne timezone
@@ -29,7 +30,7 @@ CHECK_INTERVAL = 120
 
 # Global variables
 active_chat_ids = set()
-last_check_string = "Not checked yet" # Stores the string of the last check time
+last_check_string = "Not checked yet" 
 
 # Esoteric & Simple Haircut Advice
 HAIRCUT_ADVICE = [
@@ -53,7 +54,6 @@ HAIRCUT_ADVICE = [
     "Absolutely not. Growing it out is your current life quest.",
     "Only if there's pizza involved afterwards. No pizza = no haircut.",
     "Your hair is a masterpiece in progress. Don't interrupt the artist.",
-    # New Esoteric Options
     "The void whispers 'trim'. Do not ignore the void.",
     "Your aura is tangled. A haircut is the only spiritual detangler.",
     "Entropy increases as your hair grows. Reverse the flow.",
@@ -76,6 +76,21 @@ session.headers.update({
     "X-Requested-With": "XMLHttpRequest"
 })
 
+# --- FLASK SERVER TO KEEP RENDER ALIVE ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "I am alive"
+
+def run_http_server():
+    # Render assigns a port in the environment variable 'PORT'
+    # We must listen on 0.0.0.0
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# ------------------------------------------
+
 def get_melbourne_time():
     """Get current time in Melbourne timezone."""
     return datetime.datetime.now(MELBOURNE_TZ)
@@ -93,7 +108,8 @@ def send_message(chat_id, text, reply_markup=None):
         payload = {
             "chat_id": chat_id,
             "text": text,
-            "parse_mode": "HTML"
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup
@@ -109,17 +125,16 @@ def send_menu(chat_id):
     keyboard = {
         "inline_keyboard": [
             [
-                {"text": "bot status", "callback_data": "status"},
-                {"text": "check now", "callback_data": "checknow"}
+                {"text": "📊 bot status", "callback_data": "status"},
+                {"text": "🔍 check now", "callback_data": "checknow"}
             ],
             [
-                {"text": "Should I get a haircut?", "callback_data": "haircut"}
+                {"text": "✂️ should i get a haircut?", "callback_data": "haircut"}
             ]
         ]
     }
     
-    # Minimal text required by Telegram API
-    message = "." 
+    message = "What brings you here today?"
     send_message(chat_id, message, reply_markup=keyboard)
 
 def answer_callback(callback_query_id, text):
@@ -280,10 +295,12 @@ def do_slot_check(full_check=False):
                         continue
 
                     found_any_slots = True
-                    nice_date = d_obj.strftime("%d %B")
-                    entry = f"{nice_date}: {time_str}"
+                    # Short month name format: "18 Feb"
+                    nice_date = d_obj.strftime("%d %b")
+                    entry = f"• {nice_date}: {time_str}"
                     
-                    actual_month_name = d_obj.strftime("%B")
+                    # Short month name for grouping
+                    actual_month_name = d_obj.strftime("%b")
                     results[service_name][actual_month_name].append(entry)
                     
                     time.sleep(0.3)
@@ -307,7 +324,7 @@ def format_results_simple(results):
                 final_msg += f"\n{month_name}:\n"
                 final_msg += "\n".join(entries) + "\n"
 
-    final_msg += "\nLink: https://bookings.gettimely.com/hairbytaras/book"
+    final_msg += "\n<a href='https://bookings.gettimely.com/hairbytaras/book'>Book here</a>"
     return final_msg
 
 def broadcast_to_users(message):
@@ -357,6 +374,11 @@ def handle_telegram_updates():
     # Start automated checking in background
     check_thread = Thread(target=automated_check_loop, daemon=True)
     check_thread.start()
+
+    # --- START FLASK SERVER IN BACKGROUND ---
+    server_thread = Thread(target=run_http_server, daemon=True)
+    server_thread.start()
+    # ----------------------------------------
     
     while True:
         try:
@@ -390,8 +412,14 @@ def handle_telegram_updates():
                     if callback_data == 'status':
                         answer_callback(callback_query_id, "Getting status...")
                         
-                        # Simple status report with timestamp
-                        status_msg = f"Last checked: {last_check_string}"
+                        # Status report matching your format
+                        status_msg = f"""✅ Bot Status
+
+🤖 Running normally
+🕐 Last time updated: {last_check_string}
+📅 Checking next 30 days
+
+Active users: {len(active_chat_ids)}"""
                         send_message(chat_id, status_msg)
                         send_menu(chat_id)
                         
