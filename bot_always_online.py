@@ -50,9 +50,9 @@ last_check_string = "Not checked yet"
 last_slot_found_time = None
 user_request_times = defaultdict(list)
 rate_limit_lock = Lock()
-last_menu_message_id = {}  # Track last menu message per chat for deletion
-chat_message_history = defaultdict(list)  # Track all message IDs per chat
-MAX_MESSAGES_TO_KEEP = 2  # Keep only last 2 messages
+
+# Track the SINGLE content message per chat
+chat_content_message = {}  # {chat_id: message_id}
 
 # --- ONE-LINERS (Shuffled on startup) ---
 
@@ -143,6 +143,24 @@ session.headers.update({
     "X-Requested-With": "XMLHttpRequest"
 })
 
+# --- PERSISTENT KEYBOARD DEFINITION ---
+def get_persistent_keyboard():
+    """Returns the persistent reply keyboard markup."""
+    return {
+        "keyboard": [
+            [{"text": "📊 Status"}, {"text": "🔍 Check Now"}],
+            [{"text": "✂️ Haircut Advice"}],
+            [{"text": "🔕 Stop Notifications"}]
+        ],
+        "resize_keyboard": True,
+        "persistent": True,
+        "input_field_placeholder": "Tap a button below..."
+    }
+
+def get_remove_keyboard():
+    """Returns markup to remove the keyboard."""
+    return {"remove_keyboard": True}
+
 # --- PERSISTENCE FUNCTIONS ---
 def save_users():
     """Save active users to file for persistence across restarts."""
@@ -186,7 +204,6 @@ def run_http_server():
     try:
         port = int(os.environ.get("PORT", 8080))
         print(f"Starting Flask server on port {port}...")
-        # Use threaded=True to handle multiple requests
         app.run(host='0.0.0.0', port=port, threaded=True, use_reloader=False)
     except Exception as e:
         print(f"Error starting Flask server: {e}", file=sys.stderr)
@@ -246,7 +263,7 @@ def get_time_since_last_slot():
         days = total_seconds // 86400
         return f"{days} day{'s' if days != 1 else ''} ago"
 
-# --- TELEGRAM FUNCTIONS ---
+# --- MESSAGE FUNCTIONS ---
 def delete_message(chat_id, message_id):
     """Delete a message from chat."""
     try:
@@ -259,20 +276,6 @@ def delete_message(chat_id, message_id):
     except Exception as e:
         print(f"Error deleting message: {e}")
 
-def cleanup_chat_messages(chat_id, new_message_id=None):
-    """Delete old messages, keeping only the last MAX_MESSAGES_TO_KEEP messages."""
-    try:
-        if new_message_id:
-            chat_message_history[chat_id].append(new_message_id)
-        
-        while len(chat_message_history[chat_id]) > MAX_MESSAGES_TO_KEEP:
-            old_message_id = chat_message_history[chat_id].pop(0)
-            delete_message(chat_id, old_message_id)
-            time.sleep(0.1)
-            
-    except Exception as e:
-        print(f"Error cleaning up messages: {e}")
-
 def delete_user_message(chat_id, message_id):
     """Delete a user's message."""
     try:
@@ -280,16 +283,8 @@ def delete_user_message(chat_id, message_id):
     except Exception as e:
         print(f"Error deleting user message: {e}")
 
-def delete_previous_menu(chat_id):
-    """Delete the previous menu message if it exists."""
-    if chat_id in last_menu_message_id:
-        delete_message(chat_id, last_menu_message_id[chat_id])
-        # Also remove from history
-        if last_menu_message_id[chat_id] in chat_message_history[chat_id]:
-            chat_message_history[chat_id].remove(last_menu_message_id[chat_id])
-        del last_menu_message_id[chat_id]
-
-def send_message(chat_id, text, reply_markup=None, retries=3, track_message=True):
+# --- TELEGRAM FUNCTIONS ---
+def send_message(chat_id, text, reply_markup=None, retries=3):
     """Send message to a specific chat with retry logic."""
     for attempt in range(retries):
         try:
@@ -308,11 +303,7 @@ def send_message(chat_id, text, reply_markup=None, retries=3, track_message=True
             if response.status_code == 200:
                 result = response.json()
                 if result.get('ok'):
-                    message_id = result.get('result', {}).get('message_id')
-                    # Track this message if requested
-                    if message_id and track_message:
-                        cleanup_chat_messages(chat_id, message_id)
-                    return message_id
+                    return result.get('result', {}).get('message_id')
             
             if attempt < retries - 1:
                 time.sleep(2)
@@ -340,35 +331,59 @@ def edit_message(chat_id, message_id, text, reply_markup=None):
             payload["reply_markup"] = reply_markup
         
         response = requests.post(url, json=payload, timeout=10)
-        return response.status_code == 200
+        if response.status_code == 200:
+            result = response.json()
+            return result.get('ok', False)
+        return False
     except Exception as e:
         print(f"Error editing message: {e}")
         return False
 
-def send_menu(chat_id):
-    """Send simple menu with buttons, deleting previous menu first."""
-    delete_previous_menu(chat_id)
+def update_content_message(chat_id, text, show_keyboard=True):
+    """
+    Update the single content message for a chat.
+    - If message exists, try to edit it
+    - If edit fails or no message exists, delete old and send new
+    """
+    reply_markup = get_persistent_keyboard() if show_keyboard else None
     
-    keyboard = {
-        "inline_keyboard": [
-            [
-                {"text": "📊 Bot Status", "callback_data": "status"},
-                {"text": "🔍 Check Now", "callback_data": "checknow"}
-            ],
-            [
-                {"text": "✂️ Should I Get a Haircut?", "callback_data": "haircut"}
-            ],
-            [
-                {"text": "🔕 Stop Notifications", "callback_data": "stop_notifications"}
-            ]
-        ]
-    }
+    # Try to edit existing message first
+    if chat_id in chat_content_message:
+        old_msg_id = chat_content_message[chat_id]
+        if edit_message(chat_id, old_msg_id, text, reply_markup):
+            return old_msg_id
+        else:
+            # Edit failed (message too old, deleted, or content same)
+            # Delete old message and send new
+            delete_message(chat_id, old_msg_id)
     
-    message = "What would you like to do?"
-    message_id = send_message(chat_id, message, reply_markup=keyboard, track_message=True)
+    # Send new message
+    new_msg_id = send_message(chat_id, text, reply_markup)
+    if new_msg_id:
+        chat_content_message[chat_id] = new_msg_id
+    return new_msg_id
+
+def show_loading_then_content(chat_id, loading_text, final_text_func):
+    """
+    Show loading message, perform action, then update with result.
+    final_text_func should be a callable that returns the final text.
+    """
+    # Show loading state
+    update_content_message(chat_id, loading_text)
     
-    if message_id:
-        last_menu_message_id[chat_id] = message_id
+    # Get the final content
+    final_text = final_text_func()
+    
+    # Update with final content
+    update_content_message(chat_id, final_text)
+
+def send_password_prompt(chat_id):
+    """Send password prompt to unauthenticated user (no keyboard)."""
+    message = "🔐 <b>Authentication Required</b>\n\nThis bot is private. Please enter the password to continue:"
+    # Remove keyboard for unauthenticated users
+    msg_id = send_message(chat_id, message, get_remove_keyboard())
+    if msg_id:
+        chat_content_message[chat_id] = msg_id
 
 def send_welcome_message(chat_id):
     """Send welcome message with bot introduction after authentication."""
@@ -381,19 +396,26 @@ Welcome to the <b>Hair Appointment Bot</b> ✂️
 - If a slot becomes available, I'll notify you immediately
 - If nothing is found, I stay quiet (no spam!)
 
-<b>Your options:</b>
-- <b>Bot Status</b> - Check if I'm running
-- <b>Check Now</b> - Manually search for slots
-- <b>Should I Get a Haircut?</b> - Get some wisdom
+<b>Use the menu below to:</b>
+- Check bot status
+- Manually search for slots
+- Get haircut wisdom
 
 Let's find you an appointment!"""
     
-    send_message(chat_id, intro, track_message=True)
+    update_content_message(chat_id, intro)
 
-def send_password_prompt(chat_id):
-    """Send password prompt to unauthenticated user."""
-    message = "🔐 <b>Authentication Required</b>\n\nThis bot is private. Please enter the password to continue:"
-    send_message(chat_id, message, track_message=True)
+def send_home_screen(chat_id):
+    """Send the default home screen."""
+    home_text = """✂️ <b>Hair Appointment Bot</b>
+
+🤖 Status: <b>Monitoring</b>
+🕐 Last check: <b>{}</b>
+📅 Last slot: <b>{}</b>
+
+<i>Use the menu below to interact.</i>""".format(last_check_string, get_time_since_last_slot())
+    
+    update_content_message(chat_id, home_text)
 
 def answer_callback(callback_query_id, text=None):
     """Answer a callback query."""
@@ -586,17 +608,23 @@ def format_results_simple(results):
     return final_msg
 
 def broadcast_to_users(message):
-    """Send message to all active authenticated users."""
+    """Send message to all active authenticated users (updates their content message)."""
     for chat_id in list(active_chat_ids):
         if chat_id in authenticated_users:
-            send_message(chat_id, message, track_message=False)
+            update_content_message(chat_id, message)
 
 def notify_restart():
     """Notify users that the bot has restarted."""
-    restart_msg = "🔄 <b>Bot Restarted</b>\n\nI'm back online and monitoring for available slots.\n\nYou'll receive notifications when appointments become available."
+    restart_msg = """🔄 <b>Bot Restarted</b>
+
+I'm back online and monitoring for available slots.
+
+You'll receive notifications when appointments become available.
+
+<i>Use the menu below to interact.</i>"""
     for chat_id in list(active_chat_ids):
         if chat_id in authenticated_users:
-            send_message(chat_id, restart_msg, track_message=False)
+            update_content_message(chat_id, restart_msg)
 
 # --- BACKGROUND THREADS ---
 def automated_check_loop():
@@ -623,7 +651,13 @@ def automated_check_loop():
             
             melbourne_time = get_melbourne_time()
             if melbourne_time.hour == 19 and melbourne_time.minute < 2:
-                status_msg = f"📊 <b>Daily Report</b>\n\n🤖 Bot running normally\n🕐 Last check: {last_check_string}\n📅 Last slot found: {get_time_since_last_slot()}"
+                status_msg = f"""📊 <b>Daily Report</b>
+
+🤖 Bot running normally
+🕐 Last check: {last_check_string}
+📅 Last slot found: {get_time_since_last_slot()}
+
+<i>Use the menu below to interact.</i>"""
                 broadcast_to_users(status_msg)
             
             save_users()
@@ -633,14 +667,80 @@ def automated_check_loop():
         
         time.sleep(CHECK_INTERVAL)
 
+# --- COMMAND HANDLERS ---
+def handle_status(chat_id):
+    """Handle status request."""
+    status_msg = f"""📊 <b>Bot Status</b>
+
+🤖 Status: <b>Running</b>
+🕐 Last check: <b>{last_check_string}</b>
+📅 Last slot found: <b>{get_time_since_last_slot()}</b>
+🔍 Monitoring: Next 30 days
+
+👥 Active users: {len(active_chat_ids)}
+🔢 Your requests: {get_rate_limit_remaining(chat_id)}/{RATE_LIMIT_REQUESTS} remaining
+
+<i>Use the menu below to interact.</i>"""
+    update_content_message(chat_id, status_msg)
+
+def handle_check_now(chat_id):
+    """Handle manual check request."""
+    # Show loading state
+    update_content_message(chat_id, "🔍 <b>Checking next 3 months...</b>\n\n⏳ This may take a moment...")
+    
+    # Perform the check
+    found_any_slots, results = do_slot_check(full_check=True)
+    
+    # Show results
+    if found_any_slots:
+        message = format_results_simple(results)
+        message += "\n\n<i>Use the menu below to interact.</i>"
+    else:
+        message = """❌ <b>No slots found</b>
+
+No appointments available in the next 3 months.
+
+I'll notify you automatically when something opens up!
+
+<i>Use the menu below to interact.</i>"""
+    
+    update_content_message(chat_id, message)
+
+def handle_haircut_advice(chat_id):
+    """Handle haircut advice request."""
+    advice = random.choice(HAIRCUT_ADVICE)
+    message = f"""✂️ <b>Haircut Wisdom</b>
+
+<i>"{advice}"</i>
+
+<i>Use the menu below for more options.</i>"""
+    update_content_message(chat_id, message)
+
+def handle_stop_notifications(chat_id):
+    """Handle stop notifications request."""
+    active_chat_ids.discard(chat_id)
+    save_users()
+    
+    message = """🔕 <b>Unsubscribed</b>
+
+You will no longer receive automatic notifications.
+
+Send any message to re-subscribe."""
+    
+    # Remove the keyboard when unsubscribed
+    if chat_id in chat_content_message:
+        delete_message(chat_id, chat_content_message[chat_id])
+        del chat_content_message[chat_id]
+    
+    send_message(chat_id, message, get_remove_keyboard())
+
 # --- MAIN BOT LOOP ---
 def handle_telegram_updates():
-    """Main bot loop - handles messages and button presses."""
+    """Main bot loop - handles messages from reply keyboard."""
     print("Starting Telegram bot...")
     
     load_users()
     
-    # Give Flask server time to start
     time.sleep(2)
     
     if active_chat_ids:
@@ -651,7 +751,6 @@ def handle_telegram_updates():
     consecutive_errors = 0
     max_consecutive_errors = 5
     
-    # Create a session for Telegram API calls with keep-alive
     telegram_session = requests.Session()
     telegram_session.headers.update({
         "Connection": "keep-alive"
@@ -662,7 +761,7 @@ def handle_telegram_updates():
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
             params = {
                 "timeout": 30,
-                "allowed_updates": ["message", "callback_query"]
+                "allowed_updates": ["message"]  # Only need messages now (reply keyboard sends messages)
             }
             if offset:
                 params["offset"] = offset
@@ -700,85 +799,16 @@ def handle_telegram_updates():
             for update in updates:
                 offset = update['update_id'] + 1
                 
-                if 'callback_query' in update:
-                    callback = update['callback_query']
-                    callback_data = callback.get('data', '')
-                    chat_id = callback['message']['chat']['id']
-                    callback_query_id = callback['id']
-                    message_id = callback['message']['message_id']
-                    
-                    if chat_id not in authenticated_users:
-                        answer_callback(callback_query_id, "Please authenticate first!")
-                        send_password_prompt(chat_id)
-                        continue
-                    
-                    if not check_rate_limit(chat_id):
-                        answer_callback(callback_query_id, "Rate limited! Please wait.")
-                        remaining_wait = RATE_LIMIT_WINDOW - (time.time() - min(user_request_times[chat_id]))
-                        send_message(chat_id, f"⚠️ <b>Rate Limited</b>\n\nPlease wait {int(remaining_wait)} seconds before making more requests.\n\nLimit: {RATE_LIMIT_REQUESTS} requests per minute.", track_message=True)
-                        continue
-                    
-                    active_chat_ids.add(chat_id)
-                    
-                    if callback_data == 'status':
-                        answer_callback(callback_query_id)
-                        
-                        status_msg = f"""📊 <b>Bot Status</b>
-
-🤖 Status: <b>Running</b>
-🕐 Last check: <b>{last_check_string}</b>
-📅 Last slot found: <b>{get_time_since_last_slot()}</b>
-🔍 Monitoring: Next 30 days
-
-👥 Active users: {len(active_chat_ids)}
-🔢 Your requests: {get_rate_limit_remaining(chat_id)}/{RATE_LIMIT_REQUESTS} remaining"""
-                        send_message(chat_id, status_msg, track_message=True)
-                        send_menu(chat_id)
-                        
-                    elif callback_data == 'checknow':
-                        answer_callback(callback_query_id)
-                        
-                        checking_msg_id = send_message(chat_id, "🔍 Checking next 3 months...\n\nThis may take a moment.", track_message=True)
-                        
-                        found_any_slots, results = do_slot_check(full_check=True)
-                        
-                        if checking_msg_id:
-                            delete_message(chat_id, checking_msg_id)
-                            # Remove from history since we're deleting it
-                            if checking_msg_id in chat_message_history[chat_id]:
-                                chat_message_history[chat_id].remove(checking_msg_id)
-                        
-                        if found_any_slots:
-                            message = format_results_simple(results)
-                            send_message(chat_id, message, track_message=True)
-                        else:
-                            send_message(chat_id, "❌ <b>No slots found</b>\n\nNo appointments available in the next 3 months.\n\nI'll notify you automatically when something opens up!", track_message=True)
-                        
-                        send_menu(chat_id)
-                        
-                    elif callback_data == 'haircut':
-                        answer_callback(callback_query_id)
-                        
-                        advice = random.choice(HAIRCUT_ADVICE)
-                        send_message(chat_id, f"✂️ <i>{advice}</i>", track_message=True)
-                        send_menu(chat_id)
-                    
-                    elif callback_data == 'stop_notifications':
-                        answer_callback(callback_query_id, "Notifications stopped")
-                        active_chat_ids.discard(chat_id)
-                        delete_previous_menu(chat_id)
-                        save_users()
-                        send_message(chat_id, "🔕 <b>Unsubscribed</b>\n\nYou will no longer receive automatic notifications.\n\nSend any message to re-subscribe.", track_message=True)
-                
-                elif 'message' in update:
+                if 'message' in update:
                     message = update['message']
                     chat_id = message['chat']['id']
-                    message_id = message['message_id']
+                    user_message_id = message['message_id']
                     text = message.get('text', '').strip()
                     
-                    # Delete the user's message after a short delay
-                    Thread(target=lambda: (time.sleep(0.5), delete_user_message(chat_id, message_id)), daemon=True).start()
+                    # Always delete user messages to keep chat clean
+                    Thread(target=lambda mid=user_message_id, cid=chat_id: (time.sleep(0.2), delete_user_message(cid, mid)), daemon=True).start()
                     
+                    # --- AUTHENTICATION ---
                     if chat_id not in authenticated_users:
                         if text.lower() == '/start':
                             send_password_prompt(chat_id)
@@ -789,28 +819,48 @@ def handle_telegram_updates():
                             active_chat_ids.add(chat_id)
                             save_users()
                             send_welcome_message(chat_id)
-                            send_menu(chat_id)
                         else:
-                            send_message(chat_id, "❌ <b>Incorrect password</b>\n\nPlease try again:", track_message=True)
+                            # Wrong password
+                            msg = "❌ <b>Incorrect password</b>\n\nPlease try again:"
+                            if chat_id in chat_content_message:
+                                edit_message(chat_id, chat_content_message[chat_id], msg)
+                            else:
+                                msg_id = send_message(chat_id, msg, get_remove_keyboard())
+                                if msg_id:
+                                    chat_content_message[chat_id] = msg_id
                         continue
                     
-                    if text.lower() == '/start':
-                        active_chat_ids.add(chat_id)
-                        save_users()
-                        delete_previous_menu(chat_id)
-                        send_menu(chat_id)
-                        continue
-                    
+                    # --- RATE LIMITING ---
                     if not check_rate_limit(chat_id):
-                        send_message(chat_id, f"⚠️ <b>Rate Limited</b>\n\nPlease wait before making more requests.\n\nLimit: {RATE_LIMIT_REQUESTS} requests per minute.", track_message=True)
+                        update_content_message(chat_id, f"⚠️ <b>Rate Limited</b>\n\nPlease wait before making more requests.\n\nLimit: {RATE_LIMIT_REQUESTS} requests per minute.")
                         continue
                     
+                    # --- RE-SUBSCRIBE IF NEEDED ---
                     if chat_id not in active_chat_ids:
                         active_chat_ids.add(chat_id)
                         save_users()
-                        send_message(chat_id, "🔔 <b>Re-subscribed!</b>\n\nYou'll now receive notifications again.", track_message=True)
+                        update_content_message(chat_id, "🔔 <b>Re-subscribed!</b>\n\nYou'll now receive notifications again.\n\n<i>Use the menu below to interact.</i>")
+                        continue
                     
-                    send_menu(chat_id)
+                    # --- HANDLE MENU BUTTONS (Reply Keyboard sends text) ---
+                    if text == "📊 Status":
+                        handle_status(chat_id)
+                    
+                    elif text == "🔍 Check Now":
+                        handle_check_now(chat_id)
+                    
+                    elif text == "✂️ Haircut Advice":
+                        handle_haircut_advice(chat_id)
+                    
+                    elif text == "🔕 Stop Notifications":
+                        handle_stop_notifications(chat_id)
+                    
+                    elif text.lower() == '/start':
+                        send_home_screen(chat_id)
+                    
+                    else:
+                        # Unknown text - just show home screen
+                        send_home_screen(chat_id)
             
             if offset and offset % 30 == 0:
                 print(f"Bot alive - processed {offset} updates")
@@ -845,23 +895,19 @@ if __name__ == "__main__":
     print(f"Check interval: {CHECK_INTERVAL} seconds")
     print(f"Rate limit: {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW} seconds")
     print(f"One-liners loaded: {len(HAIRCUT_ADVICE)}")
-    print(f"Max messages to keep: {MAX_MESSAGES_TO_KEEP}")
+    print("Using PERSISTENT REPLY KEYBOARD")
     print("=" * 50)
     
-    # Start Flask server in a separate thread FIRST
     print("Starting Flask server...")
     server_thread = Thread(target=run_http_server, daemon=False)
     server_thread.start()
     
-    # Give Flask time to start
     time.sleep(3)
     print("Flask server should be running now")
     
-    # Start automated check loop
     print("Starting automated check loop...")
     check_thread = Thread(target=automated_check_loop, daemon=True)
     check_thread.start()
     
-    # Start Telegram bot (main thread)
     print("Starting Telegram bot...")
     handle_telegram_updates()
