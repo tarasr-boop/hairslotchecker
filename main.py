@@ -58,10 +58,12 @@ def check_for_commands():
         data = response.json()
         
         if not data.get('ok'):
+            print("Failed to get Telegram updates")
             return False
         
         updates = data.get('result', [])
         if not updates:
+            print("No Telegram updates found")
             return False
         
         # Get the latest message
@@ -70,12 +72,21 @@ def check_for_commands():
         text = message.get('text', '').strip().lower()
         chat_id = message.get('chat', {}).get('id')
         
+        print(f"Received message: '{text}' from chat_id: {chat_id}")
+        
         # Only respond to authorized users
         if str(chat_id) not in RECIPIENT_IDS:
+            print(f"Unauthorized chat_id: {chat_id}")
             return False
         
         # Handle commands
         if text in ['/status', 'status', '/check', 'check']:
+            print("Status command detected!")
+            # Send immediate acknowledgement
+            ack_msg = "⏳ <b>Obtaining status...</b>"
+            send_notification(ack_msg)
+            time.sleep(1)
+            
             melbourne_time = get_melbourne_time()
             status_msg = f"✅ <b>Bot Status</b>\n\n"
             status_msg += f"🤖 Bot is running normally\n"
@@ -92,13 +103,18 @@ def check_for_commands():
             return True
         
         elif text in ['/checknow', 'check now', 'now']:
-            send_notification("🔍 <b>Manual Check Started</b>\n\nChecking for available slots in the next 3 months...")
+            print("Check now command detected!")
+            # Send immediate acknowledgement
+            ack_msg = "🔍 <b>Checking availability for next 3 months...</b>\n\n<i>Stand by, this may take a minute</i>"
+            send_notification(ack_msg)
             
             # Mark message as read
             update_id = latest_update.get('update_id')
             requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={update_id + 1}", timeout=5)
             
             return 'run_full_check'
+        
+        print(f"Message '{text}' not recognized as a command")
         
     except Exception as e:
         print(f"Command check error: {e}")
