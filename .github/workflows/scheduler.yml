@@ -2,8 +2,8 @@ name: Check Slots
 
 on:
   schedule:
-    # Runs every 10 minutes (GitHub Actions can delay 5-min schedules)
-    - cron: '*/10 * * * *'
+    # Runs every 6 minutes (GitHub Actions can delay 5-min schedules)
+    - cron: '*/6 * * * *'
   workflow_dispatch: # Allows manual trigger
   push:
     branches:
