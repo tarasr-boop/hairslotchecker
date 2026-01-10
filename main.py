@@ -11,13 +11,13 @@ RECIPIENT_IDS = [
     os.environ['TELEGRAM_CHAT_ID_SOFIIA']
 ]
 
-# The unique business ID for Hair By Taras
 BUSINESS_ID = "8ab07528-c2a9-463d-a441-3e0aa39a975e"
+STAFF_ID = "339008"  # This is Taras's specific ID found in your screenshot
 
-# The specific Service IDs found in your screenshots
+# FIXED: Removed the ":SV" from the ends of these numbers
 SERVICES_TO_CHECK = {
-    "💇‍♂️ Short Hair Clipper": "1802687:SV", 
-    "🦁 Curly Cut": "1802702:SV"
+    "💇‍♂️ Short Hair Clipper": "1802687", 
+    "🦁 Curly Cut": "1802702"
 }
 
 def send_notification(message):
@@ -35,7 +35,7 @@ def check_service_month(year, month, service_name, service_id):
         "obg": BUSINESS_ID,
         "month": month,
         "year": year,
-        "staffId": "-1",
+        "staffId": STAFF_ID, # Request Taras specifically
         "serviceIds": service_id, 
         "tzId": "57"
     }
@@ -51,8 +51,9 @@ def check_service_month(year, month, service_name, service_id):
         response = requests.get(url, params=params, headers=headers, timeout=10)
         data = response.json()
         
-        # DEBUG: Print exact response for troubleshooting
-        print(f"Checking {service_name} ({year}-{month})...") 
+        # DEBUG: This will print the site's reply to the GitHub logs
+        # Look for this line if you get "No dates found" again!
+        print(f"DEBUG {service_name} ({year}-{month}): {str(data)[:200]}")
 
         if isinstance(data, list): return data
         elif "startDates" in data: return data["startDates"]
@@ -69,12 +70,9 @@ def run_checks():
     for service_name, service_id in SERVICES_TO_CHECK.items():
         print(f"\n🔎 Checking {service_name}...")
         
-        # Check next 4 months (Jan, Feb, Mar, Apr)
         for i in range(4): 
             target_month = today.month + i
             target_year = today.year
-            
-            # Handle year rollover (if month > 12)
             if target_month > 12:
                 target_month -= 12
                 target_year += 1
@@ -83,13 +81,12 @@ def run_checks():
             
             if dates:
                 print(f"✅ FOUND: {len(dates)} slots in {target_month}/{target_year}")
-                # THIS WAS THE BROKEN LINE BEFORE:
                 found_messages.append(f"✅ {service_name} ({target_month}/{target_year}):")
                 found_messages.append(f"   Dates: {', '.join(dates[:5])}")
                 if len(dates) > 5: found_messages.append("   ...and more!")
-                found_messages.append("") # Empty line for spacing
+                found_messages.append("")
         
-        time.sleep(1) # Be polite to their server
+        time.sleep(1)
 
     if found_messages:
         final_msg = "🚨 HAIR BY TARAS UPDATES!\n\n" + "\n".join(found_messages)
