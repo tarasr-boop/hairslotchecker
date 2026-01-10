@@ -47,38 +47,58 @@ last_slot_found_time = None  # Track when slots were last found
 user_request_times = defaultdict(list)  # For rate limiting
 rate_limit_lock = Lock()
 
-# Esoteric & Simple Haircut Advice
+# Esoteric & Witty Consulting-Themed Haircut Advice
 HAIRCUT_ADVICE = [
-    "Absolutely not. Your hair is perfect. Don't you dare touch it.",
-    "YES. Book it. Your hair has been plotting against you.",
-    "Ask again after you've had coffee. This is too big a decision.",
-    "Your hair called. It said 'please no, we had a good run.'",
-    "Flip a coin. Heads is haircut, Tails is grow it to your ankles.",
-    "According to calculations, you have exactly 3 days before critical hair failure.",
-    "Only if you're ready to commit to the post-haircut selfie.",
-    "It has been too long. The answer is yes.",
-    "Your hair looks fine, but imagine how aerodynamic you could be.",
-    "Real rockstars never get haircuts. Are you a rockstar?",
-    "Check the moon phase. Mercury is in retrograde. Proceed with caution.",
-    "Only if you promise not to look like a freshly sheared sheep.",
-    "Yes, but only if you tip the barber in interpretive dance.",
-    "Embrace the chaos. Get a mullet.",
-    "The magic 8-ball says: 'Reply hazy, try again after shampooing.'",
-    "You don't need a haircut. You need a safari hat.",
-    "Yes. Strike while the scissors are hot.",
-    "Absolutely not. Growing it out is your current life quest.",
-    "Only if there's pizza involved afterwards. No pizza = no haircut.",
-    "Your hair is a masterpiece in progress. Don't interrupt the artist.",
-    "The void whispers 'trim'. Do not ignore the void.",
-    "Your aura is tangled. A haircut is the only spiritual detangler.",
-    "Entropy increases as your hair grows. Reverse the flow.",
-    "The scissors of destiny await your signal.",
-    "Vibrationally, you are too heavy. Shed the weight.",
-    "The ancient texts remain silent on your bangs.",
-    "Do not disturb the natural decay of the universe.",
-    "A haircut is a ritual of sacrifice. Are you prepared?",
-    "The geometry of your current style offends the cosmos.",
-    "Align your physical form with your astral projection. Cut it."
+    "Per my last email, your hair requires immediate strategic intervention.",
+    "Let's take this offline—your split ends need a private consultation.",
+    "I'll need to loop in the scissors on this one.",
+    "Your hair's ROI is diminishing. Time to pivot.",
+    "Let's circle back when your roots aren't showing.",
+    "This is a high-priority follicle situation. Escalate immediately.",
+    "Your current style lacks synergy. Consider a trim.",
+    "We need to align your hair with Q4 objectives.",
+    "I'm seeing some bandwidth issues with your current length.",
+    "Let's table the haircut discussion until Mercury exits retrograde.",
+    "Your hair is giving 'scope creep.' Rein it in.",
+    "The deliverables are clear: you need a cut.",
+    "I've done the due diligence. The recommendation is: scissors.",
+    "Your hair has exceeded its sprint capacity. Time to groom the backlog.",
+    "This requires a paradigm shift. From long to short.",
+    "Let's not boil the ocean—just trim the ends.",
+    "Your follicles are misaligned with stakeholder expectations.",
+    "The optics on your current hairstyle are... suboptimal.",
+    "We need to rightsize your hair situation.",
+    "Your style lacks vertical integration. Consider layers.",
+    "The ancient scrolls are silent on your bangs, but the consultants aren't.",
+    "Your hair's burn rate is unsustainable. Cut costs. Literally.",
+    "I'm flagging this as a blocker. The blocker is your hair.",
+    "Let's leverage our core competencies here: booking appointments.",
+    "Your hair is technically debt. Time to refactor.",
+    "The tea leaves say 'trim.' The Gantt chart agrees.",
+    "You're one haircut away from thought leadership.",
+    "Your current aesthetic is not best practice.",
+    "I've benchmarked your hair against industry standards. It's lagging.",
+    "This is a change management issue. The change is: shorter hair.",
+    "Your hair needs a retrospective. What went wrong?",
+    "The oracle has been consulted. It invoiced you and said 'yes, cut it.'",
+    "Strategically speaking, your hair is a liability.",
+    "Let's not reinvent the wheel—just get a classic cut.",
+    "Your hair is in technical debt. Time to pay it down.",
+    "The consultants recommend a full restructuring. Starting with your head.",
+    "Your style is legacy code. Time for a modern framework.",
+    "I've run the numbers. The numbers say 'barber.'",
+    "Your hair is not scalable in its current form.",
+    "This is a quick win. Low effort, high impact: haircut.",
+    "The SWOT analysis is complete. Your hair is a weakness.",
+    "Let's action this: book the appointment.",
+    "Your hair is not aligned with the north star metric.",
+    "I'm seeing diminishing returns on your current length.",
+    "The stakeholders have spoken. They want you trimmed.",
+    "Your hair lacks a clear value proposition.",
+    "Time to sunset your current hairstyle.",
+    "The data doesn't lie. Your hair is overdue.",
+    "Let's move the needle here. The needle is scissors.",
+    "Your follicular strategy needs a complete overhaul."
 ]
 
 # Session for appointment checking
@@ -223,6 +243,25 @@ def send_menu(chat_id):
     
     message = "What brings you here today?"
     send_message(chat_id, message, reply_markup=keyboard)
+
+def send_welcome_message(chat_id):
+    """Send welcome message with bot introduction after authentication."""
+    intro = """✅ Authentication successful!
+
+Welcome to the <b>Hair Appointment Bot</b> ✂️
+
+<b>How it works:</b>
+- I automatically check the booking website every 2 minutes
+- If a slot becomes available, I'll send you a notification immediately
+- If nothing is found, I stay quiet (no spam!)
+
+<b>Manual options below:</b>
+- Check status to see if I'm running
+- Check now to manually search for slots
+
+Let's find you an appointment!"""
+    
+    send_message(chat_id, intro)
 
 def send_password_prompt(chat_id):
     """Send password prompt to unauthenticated user."""
@@ -459,7 +498,7 @@ def automated_check_loop():
             # Daily status at 7 PM
             melbourne_time = get_melbourne_time()
             if melbourne_time.hour == 19 and melbourne_time.minute < 2:
-                status_msg = f"📊 Daily Report\n\n🤖 Bot running normally\n🕐 Last check: {last_check_string}\n📍 Last slot found: {get_time_since_last_slot()}"
+                status_msg = f"📊 Daily Report\n\n🤖 Bot running normally\n🕐 Last check: {last_check_string}"
                 broadcast_to_users(status_msg)
             
             # Save users periodically
@@ -541,7 +580,6 @@ def handle_telegram_updates():
 
 🤖 Running normally
 🕐 Last check: {last_check_string}
-📍 Last slot found: {get_time_since_last_slot()}
 📅 Checking next 30 days
 
 👥 Active users: {len(active_chat_ids)}
@@ -564,7 +602,7 @@ def handle_telegram_updates():
                         send_menu(chat_id)
                         
                     elif callback_data == 'haircut':
-                        answer_callback(callback_query_id, "Consulting the oracle...")
+                        answer_callback(callback_query_id, "Thinking...")
                         advice = random.choice(HAIRCUT_ADVICE)
                         send_message(chat_id, advice)
                         send_menu(chat_id)
@@ -587,7 +625,7 @@ def handle_telegram_updates():
                             authenticated_users.add(chat_id)
                             active_chat_ids.add(chat_id)
                             save_users()
-                            send_message(chat_id, "✅ Authentication successful! Welcome to the Hair Appointment Bot.")
+                            send_welcome_message(chat_id)
                             send_menu(chat_id)
                         else:
                             send_password_prompt(chat_id)
