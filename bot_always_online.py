@@ -6,13 +6,17 @@ import re
 from collections import defaultdict
 import pytz
 import random
-from threading import Thread
-from flask import Flask # NEW IMPORT
+import json
+from threading import Thread, Lock
+from flask import Flask
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 if not BOT_TOKEN:
     raise Exception("TELEGRAM_TOKEN environment variable not set!")
+
+# Password for bot access
+BOT_PASSWORD = "password"
 
 BUSINESS_ID = "8ab07528-c2a9-463d-a441-3e0aa39a975e"
 STAFF_ID = "339008"
@@ -28,9 +32,20 @@ MELBOURNE_TZ = pytz.timezone('Australia/Melbourne')
 # Check interval in seconds (2 minutes)
 CHECK_INTERVAL = 120
 
+# Rate limiting: max 10 requests per minute per user
+RATE_LIMIT_REQUESTS = 10
+RATE_LIMIT_WINDOW = 60  # seconds
+
+# File to persist active users
+USERS_FILE = "active_users.json"
+
 # Global variables
 active_chat_ids = set()
-last_check_string = "Not checked yet" 
+authenticated_users = set()  # Users who have entered the password
+last_check_string = "Not checked yet"
+last_slot_found_time = None  # Track when slots were last found
+user_request_times = defaultdict(list)  # For rate limiting
+rate_limit_lock = Lock()
 
 # Esoteric & Simple Haircut Advice
 HAIRCUT_ADVICE = [
@@ -76,6 +91,33 @@ session.headers.update({
     "X-Requested-With": "XMLHttpRequest"
 })
 
+# --- PERSISTENCE FUNCTIONS ---
+def save_users():
+    """Save active users to file for persistence across restarts."""
+    try:
+        data = {
+            "active_chat_ids": list(active_chat_ids),
+            "authenticated_users": list(authenticated_users)
+        }
+        with open(USERS_FILE, 'w') as f:
+            json.dump(data, f)
+        print(f"Saved {len(active_chat_ids)} users to file")
+    except Exception as e:
+        print(f"Error saving users: {e}")
+
+def load_users():
+    """Load active users from file."""
+    global active_chat_ids, authenticated_users
+    try:
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE, 'r') as f:
+                data = json.load(f)
+                active_chat_ids = set(data.get("active_chat_ids", []))
+                authenticated_users = set(data.get("authenticated_users", []))
+            print(f"Loaded {len(active_chat_ids)} users from file")
+    except Exception as e:
+        print(f"Error loading users: {e}")
+
 # --- FLASK SERVER TO KEEP RENDER ALIVE ---
 app = Flask('')
 
@@ -84,10 +126,29 @@ def home():
     return "I am alive"
 
 def run_http_server():
-    # Render assigns a port in the environment variable 'PORT'
-    # We must listen on 0.0.0.0
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
+
+# --- RATE LIMITING ---
+def check_rate_limit(chat_id):
+    """Check if user is within rate limit. Returns True if allowed, False if rate limited."""
+    with rate_limit_lock:
+        now = time.time()
+        # Clean old requests
+        user_request_times[chat_id] = [t for t in user_request_times[chat_id] if now - t < RATE_LIMIT_WINDOW]
+        
+        if len(user_request_times[chat_id]) >= RATE_LIMIT_REQUESTS:
+            return False
+        
+        user_request_times[chat_id].append(now)
+        return True
+
+def get_rate_limit_remaining(chat_id):
+    """Get how many requests remaining for user."""
+    with rate_limit_lock:
+        now = time.time()
+        user_request_times[chat_id] = [t for t in user_request_times[chat_id] if now - t < RATE_LIMIT_WINDOW]
+        return RATE_LIMIT_REQUESTS - len(user_request_times[chat_id])
 
 # ------------------------------------------
 
@@ -100,6 +161,29 @@ def update_last_check_time():
     global last_check_string
     t = get_melbourne_time()
     last_check_string = t.strftime('%I:%M %p')
+
+def get_time_since_last_slot():
+    """Get human-readable time since last slot was found."""
+    global last_slot_found_time
+    if last_slot_found_time is None:
+        return "No slots found yet"
+    
+    now = get_melbourne_time()
+    diff = now - last_slot_found_time
+    
+    total_seconds = int(diff.total_seconds())
+    
+    if total_seconds < 60:
+        return f"{total_seconds} seconds ago"
+    elif total_seconds < 3600:
+        minutes = total_seconds // 60
+        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    elif total_seconds < 86400:
+        hours = total_seconds // 3600
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    else:
+        days = total_seconds // 86400
+        return f"{days} day{'s' if days != 1 else ''} ago"
 
 def send_message(chat_id, text, reply_markup=None):
     """Send message to a specific chat."""
@@ -121,7 +205,7 @@ def send_message(chat_id, text, reply_markup=None):
         return False
 
 def send_menu(chat_id):
-    """Send simple menu with 3 buttons."""
+    """Send simple menu with buttons."""
     keyboard = {
         "inline_keyboard": [
             [
@@ -130,12 +214,20 @@ def send_menu(chat_id):
             ],
             [
                 {"text": "✂️ should i get a haircut?", "callback_data": "haircut"}
+            ],
+            [
+                {"text": "🔕 stop notifications", "callback_data": "stop_notifications"}
             ]
         ]
     }
     
     message = "What brings you here today?"
     send_message(chat_id, message, reply_markup=keyboard)
+
+def send_password_prompt(chat_id):
+    """Send password prompt to unauthenticated user."""
+    message = "🔐 This bot requires authentication.\n\nPlease enter the password to continue:"
+    send_message(chat_id, message)
 
 def answer_callback(callback_query_id, text):
     """Answer a callback query."""
@@ -154,7 +246,6 @@ def set_service_session(service_id):
         "LocationId": "0",
         "BookableTimeSlotItemIds": service_id
     }
-    # Timely needs this specific format for array parameters
     payload[f"ServiceStaffIds[{service_id}]"] = STAFF_ID
     
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -235,10 +326,13 @@ def check_service_month(year, month):
 
 def do_slot_check(full_check=False):
     """Check for available slots."""
+    global last_slot_found_time
+    
     melbourne_time = get_melbourne_time()
     today = melbourne_time.date()
     
-    results = defaultdict(lambda: defaultdict(list))
+    # Structure: {service_name: [(date_obj, time_str), ...]}
+    results = defaultdict(list)
     found_any_slots = False
     
     months_to_check = []
@@ -246,7 +340,6 @@ def do_slot_check(full_check=False):
     current_year = today.year
     
     if full_check:
-        # Check 3 months
         for i in range(3):
             target_month = current_month + i
             target_year = current_year
@@ -255,7 +348,6 @@ def do_slot_check(full_check=False):
                 target_year += 1
             months_to_check.append((target_year, target_month))
     else:
-        # Check 30 days
         cutoff_date = today + datetime.timedelta(days=30)
         months_to_check.append((current_year, current_month))
         
@@ -295,13 +387,7 @@ def do_slot_check(full_check=False):
                         continue
 
                     found_any_slots = True
-                    # Short month name format: "18 Feb"
-                    nice_date = d_obj.strftime("%d %b")
-                    entry = f"• {nice_date}: {time_str}"
-                    
-                    # Short month name for grouping
-                    actual_month_name = d_obj.strftime("%b")
-                    results[service_name][actual_month_name].append(entry)
+                    results[service_name].append((d_obj, time_str))
                     
                     time.sleep(0.3)
         
@@ -309,28 +395,44 @@ def do_slot_check(full_check=False):
     
     # Update global check time
     update_last_check_time()
+    
+    # Update last slot found time if we found slots
+    if found_any_slots:
+        last_slot_found_time = get_melbourne_time()
 
     return found_any_slots, results
 
 def format_results_simple(results):
-    """Format results simply without emojis."""
+    """Format results in the new simple format without month grouping."""
     final_msg = "Updates found:\n"
     
-    for service_name, months_data in results.items():
-        if months_data:
-            final_msg += f"\n-- {service_name} --\n"
+    for service_name, slots in results.items():
+        if slots:
+            final_msg += f"\n{service_name}\n\n"
             
-            for month_name, entries in months_data.items():
-                final_msg += f"\n{month_name}:\n"
-                final_msg += "\n".join(entries) + "\n"
+            # Sort by date
+            sorted_slots = sorted(slots, key=lambda x: x[0])
+            
+            for date_obj, time_str in sorted_slots:
+                # Full month name: "18 February"
+                nice_date = f"{date_obj.day} {date_obj.strftime('%B')}"
+                final_msg += f"• {nice_date}: {time_str}\n"
 
     final_msg += "\n<a href='https://bookings.gettimely.com/hairbytaras/book'>Book here</a>"
     return final_msg
 
 def broadcast_to_users(message):
-    """Send message to all active users."""
+    """Send message to all active authenticated users."""
     for chat_id in list(active_chat_ids):
-        send_message(chat_id, message)
+        if chat_id in authenticated_users:
+            send_message(chat_id, message)
+
+def notify_restart():
+    """Notify users that the bot has restarted."""
+    restart_msg = "🔄 Bot has restarted and is now running!\n\nYou will continue to receive notifications for available slots."
+    for chat_id in list(active_chat_ids):
+        if chat_id in authenticated_users:
+            send_message(chat_id, restart_msg)
 
 def automated_check_loop():
     """Background thread that checks every 2 minutes."""
@@ -343,7 +445,6 @@ def automated_check_loop():
             
             found_any_slots, results = do_slot_check(full_check=False)
             
-            # Only notify if slots are found AND it's a change from last check
             if found_any_slots and not last_slots_found:
                 print("NEW SLOTS FOUND! Notifying users...")
                 message = format_results_simple(results)
@@ -358,8 +459,11 @@ def automated_check_loop():
             # Daily status at 7 PM
             melbourne_time = get_melbourne_time()
             if melbourne_time.hour == 19 and melbourne_time.minute < 2:
-                status_msg = f"Daily Report: Bot running. Last check: {last_check_string}"
+                status_msg = f"📊 Daily Report\n\n🤖 Bot running normally\n🕐 Last check: {last_check_string}\n📍 Last slot found: {get_time_since_last_slot()}"
                 broadcast_to_users(status_msg)
+            
+            # Save users periodically
+            save_users()
             
         except Exception as e:
             print(f"Error in automated check: {e}")
@@ -369,16 +473,24 @@ def automated_check_loop():
 def handle_telegram_updates():
     """Main bot loop - handles messages and button presses."""
     print("Starting Telegram bot...")
+    
+    # Load persisted users
+    load_users()
+    
+    # Notify users about restart
+    if active_chat_ids:
+        print("Notifying users about restart...")
+        notify_restart()
+    
     offset = None
     
     # Start automated checking in background
     check_thread = Thread(target=automated_check_loop, daemon=True)
     check_thread.start()
 
-    # --- START FLASK SERVER IN BACKGROUND ---
+    # Start Flask server in background
     server_thread = Thread(target=run_http_server, daemon=True)
     server_thread.start()
-    # ----------------------------------------
     
     while True:
         try:
@@ -407,25 +519,39 @@ def handle_telegram_updates():
                     chat_id = callback['message']['chat']['id']
                     callback_query_id = callback['id']
                     
+                    # Check if user is authenticated
+                    if chat_id not in authenticated_users:
+                        answer_callback(callback_query_id, "Please authenticate first!")
+                        send_password_prompt(chat_id)
+                        continue
+                    
+                    # Rate limiting check
+                    if not check_rate_limit(chat_id):
+                        answer_callback(callback_query_id, "Rate limited! Please wait.")
+                        remaining_wait = RATE_LIMIT_WINDOW - (time.time() - min(user_request_times[chat_id]))
+                        send_message(chat_id, f"⚠️ Rate limited! Please wait {int(remaining_wait)} seconds before making more requests.\n\nLimit: {RATE_LIMIT_REQUESTS} requests per minute.")
+                        continue
+                    
                     active_chat_ids.add(chat_id)
                     
                     if callback_data == 'status':
                         answer_callback(callback_query_id, "Getting status...")
                         
-                        # Status report matching your format
                         status_msg = f"""✅ Bot Status
 
 🤖 Running normally
-🕐 Last time updated: {last_check_string}
+🕐 Last check: {last_check_string}
+📍 Last slot found: {get_time_since_last_slot()}
 📅 Checking next 30 days
 
-Active users: {len(active_chat_ids)}"""
+👥 Active users: {len(active_chat_ids)}
+🔢 Your requests remaining: {get_rate_limit_remaining(chat_id)}/{RATE_LIMIT_REQUESTS} per minute"""
                         send_message(chat_id, status_msg)
                         send_menu(chat_id)
                         
                     elif callback_data == 'checknow':
                         answer_callback(callback_query_id, "Checking...")
-                        send_message(chat_id, "Checking next 3 months...")
+                        send_message(chat_id, "🔍 Checking next 3 months...")
                         
                         found_any_slots, results = do_slot_check(full_check=True)
                         
@@ -433,24 +559,48 @@ Active users: {len(active_chat_ids)}"""
                             message = format_results_simple(results)
                             send_message(chat_id, message)
                         else:
-                            # Simple no slots message
-                            send_message(chat_id, "No slots found in next 3 months.")
+                            send_message(chat_id, "❌ No slots found in next 3 months.")
                         
                         send_menu(chat_id)
                         
                     elif callback_data == 'haircut':
-                        answer_callback(callback_query_id, "Consulting...")
+                        answer_callback(callback_query_id, "Consulting the oracle...")
                         advice = random.choice(HAIRCUT_ADVICE)
-                        # Just the advice, no title
                         send_message(chat_id, advice)
                         send_menu(chat_id)
+                    
+                    elif callback_data == 'stop_notifications':
+                        answer_callback(callback_query_id, "Notifications stopped")
+                        active_chat_ids.discard(chat_id)
+                        save_users()
+                        send_message(chat_id, "🔕 You have been unsubscribed from notifications.\n\nYou will no longer receive automatic updates about available slots.\n\nSend any message to re-subscribe.")
                 
                 # Handle text messages
                 elif 'message' in update:
                     message = update['message']
                     chat_id = message['chat']['id']
+                    text = message.get('text', '').strip()
                     
+                    # Check if user needs to authenticate
+                    if chat_id not in authenticated_users:
+                        if text.lower() == BOT_PASSWORD.lower():
+                            authenticated_users.add(chat_id)
+                            active_chat_ids.add(chat_id)
+                            save_users()
+                            send_message(chat_id, "✅ Authentication successful! Welcome to the Hair Appointment Bot.")
+                            send_menu(chat_id)
+                        else:
+                            send_password_prompt(chat_id)
+                        continue
+                    
+                    # Rate limiting check
+                    if not check_rate_limit(chat_id):
+                        send_message(chat_id, f"⚠️ Rate limited! Please wait before making more requests.\n\nLimit: {RATE_LIMIT_REQUESTS} requests per minute.")
+                        continue
+                    
+                    # User is authenticated, add to active and show menu
                     active_chat_ids.add(chat_id)
+                    save_users()
                     send_menu(chat_id)
         
         except Exception as e:
