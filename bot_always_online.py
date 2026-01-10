@@ -280,11 +280,11 @@ def edit_message_raw(chat_id, message_id, text):
         return False
 
 # --- SINGLE MESSAGE MANAGEMENT ---
-def show_content(chat_id, text):
+def show_content(chat_id, text, force_keyboard=False):
     """
     Show content in the single content message.
     Edits existing message or creates new one.
-    Keyboard stays at bottom (already set).
+    Only sends keyboard if force_keyboard=True or no message exists yet.
     """
     # Try to edit existing content message
     if chat_id in chat_content_message:
@@ -293,9 +293,9 @@ def show_content(chat_id, text):
         # Edit failed, delete old message
         delete_message(chat_id, chat_content_message[chat_id])
     
-    # Send new message (keyboard already shown, no need to resend it)
-    # But we DO need to include keyboard to keep it visible
-    msg_id = send_message_raw(chat_id, text, REPLY_KEYBOARD)
+    # Send new message - only include keyboard if forced
+    reply_markup = REPLY_KEYBOARD if force_keyboard else None
+    msg_id = send_message_raw(chat_id, text, reply_markup)
     if msg_id:
         chat_content_message[chat_id] = msg_id
 
@@ -322,7 +322,7 @@ def show_wrong_password(chat_id):
             chat_content_message[chat_id] = msg_id
 
 def show_welcome(chat_id):
-    """Show welcome message WITH keyboard."""
+    """Show welcome message WITH keyboard (only time we force it)."""
     # Delete old message first
     if chat_id in chat_content_message:
         delete_message(chat_id, chat_content_message[chat_id])
@@ -339,6 +339,7 @@ Welcome to the <b>Hair Appointment Bot</b> ✂️
 
 <i>The menu is now at the bottom of your screen!</i>"""
     
+    # Force keyboard on welcome
     msg_id = send_message_raw(chat_id, text, REPLY_KEYBOARD)
     if msg_id:
         chat_content_message[chat_id] = msg_id
@@ -402,7 +403,8 @@ def handle_resubscribe(chat_id):
 You'll now receive notifications when slots open up.
 
 Use the buttons below to interact."""
-    show_content(chat_id, text)
+    # Force keyboard when re-subscribing
+    show_content(chat_id, text, force_keyboard=True)
 
 # --- APPOINTMENT CHECKING ---
 def set_service_session(service_id):
