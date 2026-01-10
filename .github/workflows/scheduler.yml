@@ -2,8 +2,8 @@ name: Check Slots
 
 on:
   schedule:
-    # Every 10 minutes - regular slot checking
-    - cron: '*/10 * * * *'
+    # Every 6 minutes - regular slot checking
+    - cron: '*/6 * * * *'
     # Every day at 7 PM Melbourne time (9 AM UTC, since Melbourne is UTC+11)
     - cron: '0 9 * * *'
   workflow_dispatch: # Allows manual trigger
