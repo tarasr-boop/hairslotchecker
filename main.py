@@ -12,9 +12,8 @@ RECIPIENT_IDS = [
 ]
 
 BUSINESS_ID = "8ab07528-c2a9-463d-a441-3e0aa39a975e"
-STAFF_ID = "339008"  # This is Taras's specific ID found in your screenshot
+STAFF_ID = "339008" 
 
-# FIXED: Removed the ":SV" from the ends of these numbers
 SERVICES_TO_CHECK = {
     "💇‍♂️ Short Hair Clipper": "1802687", 
     "🦁 Curly Cut": "1802702"
@@ -35,7 +34,7 @@ def check_service_month(year, month, service_name, service_id):
         "obg": BUSINESS_ID,
         "month": month,
         "year": year,
-        "staffId": STAFF_ID, # Request Taras specifically
+        "staffId": STAFF_ID,
         "serviceIds": service_id, 
         "tzId": "57"
     }
@@ -51,13 +50,18 @@ def check_service_month(year, month, service_name, service_id):
         response = requests.get(url, params=params, headers=headers, timeout=10)
         data = response.json()
         
-        # DEBUG: This will print the site's reply to the GitHub logs
-        # Look for this line if you get "No dates found" again!
-        print(f"DEBUG {service_name} ({year}-{month}): {str(data)[:200]}")
+        # LOGIC FIX: Extract dates from 'openDates'
+        found_dates = []
+        
+        if isinstance(data, dict) and "openDates" in data:
+            # The website gives us a list of objects like [{'day': '2026-02-18'}, ...]
+            # We just want the 'day' text.
+            for item in data["openDates"]:
+                if "day" in item:
+                    found_dates.append(item["day"])
+        
+        return found_dates
 
-        if isinstance(data, list): return data
-        elif "startDates" in data: return data["startDates"]
-        return []
     except Exception as e:
         print(f"Error checking {service_name} {year}-{month}: {e}")
         return []
@@ -92,6 +96,7 @@ def run_checks():
         final_msg = "🚨 HAIR BY TARAS UPDATES!\n\n" + "\n".join(found_messages)
         final_msg += "\nBook here: https://bookings.gettimely.com/hairbytaras/book"
         send_notification(final_msg)
+        print("Notification sent!")
     else:
         print("\nNo dates found for any service.")
 
