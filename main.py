@@ -16,8 +16,8 @@ BUSINESS_ID = "8ab07528-c2a9-463d-a441-3e0aa39a975e"
 STAFF_ID = "339008" 
 
 SERVICES_TO_CHECK = {
-    "💇‍♂️ Short hair (1 hour)": "1802687:SV", 
-    "🦁 Curly hair (1.5 hours)": "1802702:SV"
+    "Short hair (1 hour)": "1802687:SV", 
+    "Long hair (1.5 hours)": "1802702:SV"
 }
 
 # --- SESSION SETUP ---
@@ -62,10 +62,32 @@ def set_service_session(service_id):
         print(f"Error setting service {service_id}: {e}")
         return False
 
+def parse_time_to_minutes(time_str):
+    """
+    Convert time string like '11:00AM' or '2:30PM' to minutes since midnight.
+    Used for sorting and filtering consecutive slots.
+    """
+    time_str = time_str.upper().replace(" ", "")
+    match = re.match(r'(\d{1,2}):(\d{2})(AM|PM)', time_str)
+    if not match:
+        return None
+    
+    hours = int(match.group(1))
+    minutes = int(match.group(2))
+    period = match.group(3)
+    
+    # Convert to 24-hour format
+    if period == 'PM' and hours != 12:
+        hours += 12
+    elif period == 'AM' and hours == 12:
+        hours = 0
+    
+    return hours * 60 + minutes
+
 def get_specific_times(date_str):
     """
     Fetch available time slots for a specific date.
-    Returns comma-separated string of unique times.
+    Returns only the first time slot (actual appointment start time).
     """
     url = "https://book.gettimely.com/booking/gettimeslots"
     params = {
@@ -77,30 +99,15 @@ def get_specific_times(date_str):
 
     try:
         response = session.get(url, params=params, timeout=10)
-        
-        # DEBUG: Print raw response
-        print(f"\n=== DEBUG for {date_str} ===")
-        print(f"Response length: {len(response.text)} characters")
-        
         times = re.findall(r'\d{1,2}:\d{2}\s*(?:am|pm)', response.text, re.IGNORECASE)
         
-        # DEBUG: Show all found times before deduplication
-        print(f"All times found (total {len(times)}): {times}")
-        
-        # Normalise times: remove spaces and convert to uppercase for consistent deduplication
+        # Normalise times: remove spaces and convert to uppercase
         normalised_times = [t.replace(" ", "").upper() for t in times]
+        unique_times = sorted(list(set(normalised_times)), key=parse_time_to_minutes)
         
-        # DEBUG: Show normalised times
-        print(f"Normalised times: {normalised_times}")
-        
-        unique_times = sorted(list(set(normalised_times)))
-        
-        # DEBUG: Show unique times
-        print(f"Unique times after dedup: {unique_times}")
-        print("=== END DEBUG ===\n")
-        
+        # Return only the first time slot (the actual appointment start time)
         if unique_times:
-            return ", ".join(unique_times)
+            return unique_times[0]
         return "No fitting slots"
     except Exception as e:
         print(f"Error fetching times for {date_str}: {e}")
@@ -213,7 +220,7 @@ def run_checks():
         time.sleep(1)
 
     # --- FINAL MESSAGE CONSTRUCTION ---
-    final_msg = "🚨 <b>HAIR BY TARAS UPDATE</b>\n"
+    final_msg = "🚨 <b>Update</b>\n"
     
     for service, months_data in results.items():
         final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service}</b>\n"
