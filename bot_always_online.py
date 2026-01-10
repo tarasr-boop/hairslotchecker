@@ -272,6 +272,26 @@ def send_message(chat_id, text, reply_markup=None):
         print(f"Error sending message: {e}")
         return None
 
+def edit_message(chat_id, message_id, text, reply_markup=None):
+    """Edit an existing message."""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        
+        response = requests.post(url, json=payload, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Error editing message: {e}")
+        return False
+
 def send_menu(chat_id):
     """Send simple menu with buttons, deleting previous menu first."""
     # Delete previous menu to avoid clutter
@@ -324,11 +344,13 @@ def send_password_prompt(chat_id):
     message = "🔐 <b>Authentication Required</b>\n\nThis bot is private. Please enter the password to continue:"
     send_message(chat_id, message)
 
-def answer_callback(callback_query_id, text):
+def answer_callback(callback_query_id, text=None):
     """Answer a callback query."""
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery"
-        payload = {"callback_query_id": callback_query_id, "text": text}
+        payload = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
         requests.post(url, json=payload, timeout=5)
     except Exception as e:
         print(f"Error answering callback: {e}")
@@ -605,6 +627,7 @@ def handle_telegram_updates():
                     callback_data = callback.get('data', '')
                     chat_id = callback['message']['chat']['id']
                     callback_query_id = callback['id']
+                    message_id = callback['message']['message_id']
                     
                     # Check if user is authenticated
                     if chat_id not in authenticated_users:
@@ -622,7 +645,8 @@ def handle_telegram_updates():
                     active_chat_ids.add(chat_id)
                     
                     if callback_data == 'status':
-                        answer_callback(callback_query_id, "Getting status...")
+                        # Just answer the callback without interim message
+                        answer_callback(callback_query_id)
                         
                         status_msg = f"""📊 <b>Bot Status</b>
 
@@ -637,11 +661,20 @@ def handle_telegram_updates():
                         send_menu(chat_id)
                         
                     elif callback_data == 'checknow':
-                        answer_callback(callback_query_id, "Checking...")
-                        send_message(chat_id, "🔍 Checking next 3 months...\n\nThis may take a moment.")
+                        # Answer callback and show searching message
+                        answer_callback(callback_query_id)
                         
+                        # Send the "checking" message and store its ID
+                        checking_msg_id = send_message(chat_id, "🔍 Checking next 3 months...\n\nThis may take a moment.")
+                        
+                        # Do the actual check
                         found_any_slots, results = do_slot_check(full_check=True)
                         
+                        # Delete the "checking" message
+                        if checking_msg_id:
+                            delete_message(chat_id, checking_msg_id)
+                        
+                        # Send results
                         if found_any_slots:
                             message = format_results_simple(results)
                             send_message(chat_id, message)
@@ -651,7 +684,8 @@ def handle_telegram_updates():
                         send_menu(chat_id)
                         
                     elif callback_data == 'haircut':
-                        answer_callback(callback_query_id, "Consulting the oracle...")
+                        # Just answer the callback without interim message
+                        answer_callback(callback_query_id)
                         
                         # Get random advice
                         advice = random.choice(HAIRCUT_ADVICE)
@@ -692,13 +726,12 @@ def handle_telegram_updates():
                     
                     # --- User IS authenticated from here ---
                     
-                    # Handle /start for authenticated users
+                    # Handle /start for authenticated users - seamlessly show menu
                     if text.lower() == '/start':
                         active_chat_ids.add(chat_id)
                         save_users()
-                        # Delete old menu before showing welcome back
+                        # Just delete old menu and show new one without extra message
                         delete_previous_menu(chat_id)
-                        send_message(chat_id, "👋 <b>Welcome back!</b>\n\nYou're already authenticated.")
                         send_menu(chat_id)
                         continue
                     
