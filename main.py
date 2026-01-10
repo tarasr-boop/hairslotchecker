@@ -31,11 +31,12 @@ session.headers.update({
 })
 
 def send_notification(message):
+    """Send Telegram notification to all recipients."""
     for chat_id in RECIPIENT_IDS:
         try:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
             payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
-            requests.post(url, json=payload)
+            requests.post(url, json=payload, timeout=10)
         except Exception as e:
             print(f"Msg fail: {e}")
 
@@ -62,6 +63,10 @@ def set_service_session(service_id):
         return False
 
 def get_specific_times(date_str):
+    """
+    Fetch available time slots for a specific date.
+    Returns comma-separated string of unique times.
+    """
     url = "https://book.gettimely.com/booking/gettimeslots"
     params = {
         "obg": BUSINESS_ID,
@@ -73,16 +78,23 @@ def get_specific_times(date_str):
     try:
         response = session.get(url, params=params, timeout=10)
         times = re.findall(r'\d{1,2}:\d{2}\s*(?:am|pm)', response.text, re.IGNORECASE)
-        unique_times = sorted(list(set(times)))
+        
+        # Normalise times: remove spaces and convert to uppercase for consistent deduplication
+        normalised_times = [t.replace(" ", "").upper() for t in times]
+        unique_times = sorted(list(set(normalised_times)))
         
         if unique_times:
             return ", ".join(unique_times)
         return "No fitting slots"
     except Exception as e:
-        print(f"Error times {date_str}: {e}")
+        print(f"Error fetching times for {date_str}: {e}")
         return "Time unknown"
 
 def check_service_month(year, month):
+    """
+    Check which dates are available for booking in a given month.
+    Returns list of date strings in format 'YYYY-MM-DD'.
+    """
     url = "https://book.gettimely.com/Booking/GetOpenDates"
     params = {
         "obg": BUSINESS_ID,
@@ -103,28 +115,33 @@ def check_service_month(year, month):
                     found_dates.append(item["day"])
         return found_dates
     except Exception as e:
-        print(f"Error month {year}-{month}: {e}")
+        print(f"Error checking month {year}-{month}: {e}")
         return []
 
+def should_skip_april(month_name):
+    """Check if the month is April (to be skipped)."""
+    return month_name == "April"
+
 def run_checks():
+    """Main function to check availability for all services."""
     print("--- Starting Session Check ---")
     today = datetime.date.today()
     
     results = defaultdict(lambda: defaultdict(list))
     
-    # We iterate through both services
+    # Iterate through both services
     for service_name, service_id in SERVICES_TO_CHECK.items():
         print(f"\n🔎 Checking {service_name}...")
         
-        # 1. Clear cookies to ensure clean state
+        # Clear cookies to ensure clean state
         session.cookies.clear()
         
-        # 2. PERFORM THE MAGIC SWITCH (POST Request)
+        # Set the service session
         if not set_service_session(service_id):
             print(f"   ⚠️ Failed to set session for {service_name}. Skipping...")
             continue
 
-        # Check Today + Next 2 Months (Total 3 months)
+        # Check today + next 2 months (total 3 months)
         for i in range(3): 
             target_month = today.month + i
             target_year = today.year
@@ -135,11 +152,11 @@ def run_checks():
             dummy_date = datetime.date(target_year, target_month, 1)
             month_name = dummy_date.strftime("%B")
 
-            # SKIP APRIL
-            if month_name == "April":
+            # Skip April
+            if should_skip_april(month_name):
                 continue
 
-            # 3. Check dates 
+            # Check available dates
             dates = check_service_month(target_year, target_month)
             
             if dates:
@@ -149,7 +166,7 @@ def run_checks():
                 for d_str in dates:
                     d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
                     
-                    # Date spillover check (just in case)
+                    # Skip April dates (spillover check)
                     if d_obj.month == 4:
                         continue
 
@@ -163,17 +180,18 @@ def run_checks():
                     entry = f"• {nice_date}: {time_str}"
                     
                     actual_month_name = d_obj.strftime("%B")
-                    if actual_month_name != "April":
+                    if not should_skip_april(actual_month_name):
                         results[service_name][actual_month_name].append(entry)
+                    
                     time.sleep(0.5)
                 
                 # If we found dates but none had fitting slots, mark as Nothing
                 if not month_has_valid_slots:
-                     if month_name != "April":
+                    if not should_skip_april(month_name):
                         results[service_name][month_name].append("Nothing")
             else:
                 # API returned no dates at all
-                if month_name != "April":
+                if not should_skip_april(month_name):
                     results[service_name][month_name].append("Nothing")
         
         time.sleep(1)
@@ -184,16 +202,15 @@ def run_checks():
     for service, months_data in results.items():
         final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service}</b>\n"
         for month, entries in months_data.items():
-            if month == "April": continue
+            if should_skip_april(month):
+                continue
             
-            # Combine entries. If it contains "Nothing", it prints "Nothing".
             if entries:
-                # We simply join whatever is in the list (Slots or "Nothing")
                 final_msg += f"\n📅 <b>{month}:</b>\n" + "\n".join(entries) + "\n"
 
     final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
     
-    # SEND NOTIFICATION ALWAYS (To confirm the scheduler is running)
+    # Send notification always (to confirm the scheduler is running)
     send_notification(final_msg)
     print("Notification sent!")
 
