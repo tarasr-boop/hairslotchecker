@@ -1,26 +1,73 @@
 import requests
 import os
+import time
 
-# 1. Setup Notification Keys (We will load these securely later)
+# --- CONFIGURATION ---
+# The keys are loaded from your GitHub Secrets
 BOT_TOKEN = os.environ['TELEGRAM_TOKEN']
-CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
+RECIPIENT_IDS = [
+    os.environ['TELEGRAM_CHAT_ID_TARAS'],
+    os.environ['TELEGRAM_CHAT_ID_SOFIIA']
+]
 
+# --- NOTIFICATION SYSTEM ---
 def send_notification(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message}
-    requests.post(url, json=payload)
+    """Sends the alert to both Taras and Sofiia."""
+    for chat_id in RECIPIENT_IDS:
+        try:
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            payload = {"chat_id": chat_id, "text": message}
+            requests.post(url, json=payload)
+            print(f"✅ Notification sent to ID ending in ...{str(chat_id)[-4:]}")
+        except Exception as e:
+            print(f"❌ Failed to send to {chat_id}: {e}")
 
+# --- THE CHECKING LOGIC ---
 def check_slots():
-    # --- YOUR ORIGINAL CHECKING LOGIC GOES HERE ---
-    # Example:
-    # response = requests.get("https://website.com/api/slots")
-    # if "Available" in response.text:
-    #     return True
-    return False 
+    """
+    Checks the website for availability.
+    Returns TRUE if slots are open.
+    Returns FALSE if no slots.
+    """
+    
+    # ---------------------------------------------------------
+    # PART YOU NEED TO EDIT LATER
+    # ---------------------------------------------------------
+    
+    # 1. Put the website URL here
+    url = "https://example.com/slots" 
+    
+    try:
+        # This pretends to be a real browser so the site doesn't block us
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        
+        # 2. Get the website content
+        print(f"Checking {url}...")
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        # 3. The Logic: specific words to look for
+        # If the website usually says "No appointments", we check if that phrase is GONE.
+        # Or we check if "Select Date" IS present.
+        
+        website_text = response.text.lower()
+        
+        # EXAMPLE LOGIC (Change this based on your specific site):
+        if "available" in website_text or "book now" in website_text:
+            return True
+        else:
+            return False
+            
+    except Exception as e:
+        print(f"Error checking website: {e}")
+        return False
 
-# 2. Run the logic
-if check_slots():
-    send_notification("🚨 SLOT AVAILABLE! Go check now!")
-    print("Notification sent.")
-else:
-    print("No slots found.")
+# --- EXECUTION ---
+if __name__ == "__main__":
+    print("--- Starting Check ---")
+    if check_slots():
+        send_notification("🚨 SLOT AVAILABLE! Go check the website now!")
+    else:
+        print("No slots found.")
+    print("--- Check Complete ---")
