@@ -29,15 +29,17 @@ def send_notification(message):
         except Exception as e:
             print(f"Msg fail: {e}")
 
-def get_specific_times(date_str):
+def get_specific_times(date_str, service_id):
     """
     Hits the specific endpoint to get hours for a single day.
+    CRITICAL: We pass the service_id so the server knows the duration!
     """
     url = "https://book.gettimely.com/booking/gettimeslots"
     params = {
         "obg": BUSINESS_ID,
         "dateSelected": date_str,
-        "staffId": "-1",
+        "staffId": STAFF_ID,      # Specific Staff (Taras)
+        "serviceIds": service_id, # Specific Service (Calculates duration)
         "tzId": "57"
     }
     
@@ -51,7 +53,6 @@ def get_specific_times(date_str):
         response = requests.get(url, params=params, headers=headers, timeout=10)
         
         # Regex to find times like "11:00am", "11:00 am", "11:00 PM"
-        # \s* allows for an optional space
         times = re.findall(r'\d{1,2}:\d{2}\s*(?:am|pm)', response.text, re.IGNORECASE)
         
         # Clean up (remove duplicates and sort)
@@ -60,7 +61,9 @@ def get_specific_times(date_str):
         if unique_times:
             return ", ".join(unique_times)
         
-        return "Check link"
+        # If no times found (but the date was open), it might be fully booked 
+        # for this specific large service, or the slot is too small.
+        return "No fitting slots"
         
     except Exception as e:
         print(f"Error getting times for {date_str}: {e}")
@@ -100,7 +103,6 @@ def run_checks():
     print("--- Starting Check ---")
     today = datetime.date.today()
     
-    # Structure: results["Short Hair"]["February"] = ["• 18 Feb: 11:00am"]
     results = defaultdict(lambda: defaultdict(list))
     has_found_any = False
 
@@ -114,21 +116,25 @@ def run_checks():
                 target_month -= 12
                 target_year += 1
             
-            # Get the Month Name (e.g. "February") immediately
+            # Get Month Name
             dummy_date = datetime.date(target_year, target_month, 1)
             month_name = dummy_date.strftime("%B")
 
             dates = check_service_month(target_year, target_month, service_id)
             
             if dates:
-                has_found_any = True
                 print(f"   Found {len(dates)} days in {month_name}")
                 
                 for d_str in dates:
-                    # 1. Get exact times
-                    time_str = get_specific_times(d_str)
+                    # 1. Get exact times (PASSING SERVICE ID NOW)
+                    time_str = get_specific_times(d_str, service_id)
                     
-                    # 2. Format nice date "18 Feb"
+                    if time_str == "No fitting slots":
+                        continue
+
+                    has_found_any = True
+                    
+                    # 2. Format nice date
                     d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
                     nice_date = d_obj.strftime("%d %B")
                     
@@ -136,13 +142,10 @@ def run_checks():
                     results[service_name][month_name].append(entry)
                     time.sleep(0.5)
             else:
-                # Add explicit "Nothing" entry if no dates found
                 results[service_name][month_name].append("Nothing")
         
         time.sleep(1)
 
-    # Only send notification if AT LEAST ONE slot was found somewhere.
-    # Otherwise, you would get a "Nothing" message every 5 minutes forever.
     if has_found_any:
         final_msg = "🚨 <b>HAIR BY TARAS UPDATE</b>\n"
         
@@ -152,8 +155,13 @@ def run_checks():
             
             for month, entries in months_data.items():
                 final_msg += f"\n📅 <b>{month}:</b>\n"
-                # Join all entries (dates or "Nothing")
-                final_msg += "\n".join(entries) + "\n"
+                
+                # Filter out "Nothing" if there are real entries for that month
+                real_entries = [e for e in entries if e != "Nothing"]
+                if real_entries:
+                    final_msg += "\n".join(real_entries) + "\n"
+                else:
+                    final_msg += "Nothing\n"
         
         final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
         
