@@ -15,7 +15,7 @@ RECIPIENT_IDS = [
 BUSINESS_ID = "8ab07528-c2a9-463d-a441-3e0aa39a975e"
 STAFF_ID = "339008" 
 
-# Using the IDs with :SV as shown in your HTML screenshots
+# Using the IDs with :SV exactly as in the HTML value attribute
 SERVICES_TO_CHECK = {
     "💇‍♂️ Short hair (1 hour)": "1802687:SV", 
     "🦁 Curly hair (1.5 hours)": "1802702:SV"
@@ -32,14 +32,16 @@ def send_notification(message):
 
 def get_specific_times(date_str, service_id):
     """
-    Hits the endpoint using 'bookableTimeSlotItemIds' to ensure exact duration is respected.
+    Hits the endpoint using 'BookableTimeSlotItemIds' (Capital B) to match HTML.
+    This forces the server to calculate the specific duration (1h vs 1.5h).
     """
     url = "https://book.gettimely.com/booking/gettimeslots"
     params = {
         "obg": BUSINESS_ID,
         "dateSelected": date_str,
         "staffId": STAFF_ID,      
-        "bookableTimeSlotItemIds": service_id, # CHANGED from serviceIds to match HTML input
+        # CRITICAL FIX: Capital 'B' to match the HTML Input Name exactly
+        "BookableTimeSlotItemIds": service_id, 
         "tzId": "57"
     }
     
@@ -52,7 +54,7 @@ def get_specific_times(date_str, service_id):
     try:
         response = requests.get(url, params=params, headers=headers, timeout=10)
         
-        # Regex to find times like "11:00am", "11:00 am", "11:00 PM"
+        # Regex to find times
         times = re.findall(r'\d{1,2}:\d{2}\s*(?:am|pm)', response.text, re.IGNORECASE)
         unique_times = sorted(list(set(times)))
         
@@ -72,7 +74,8 @@ def check_service_month(year, month, service_id):
         "month": month,
         "year": year,
         "staffId": STAFF_ID,
-        "bookableTimeSlotItemIds": service_id, # CHANGED from serviceIds
+        # CRITICAL FIX: Capital 'B' here too
+        "BookableTimeSlotItemIds": service_id,
         "tzId": "57"
     }
     headers = {
@@ -105,21 +108,25 @@ def run_checks():
     for service_name, service_id in SERVICES_TO_CHECK.items():
         print(f"\n🔎 Checking {service_name}...")
         
-        # Check current month + next 2 months (Total 3)
+        # Check Today + Next 2 Months (Total 3)
         for i in range(3): 
             target_month = today.month + i
             target_year = today.year
+            
+            # Handle year rollover
             if target_month > 12:
                 target_month -= 12
                 target_year += 1
             
-            # Get Month Name for display
+            # Get Month Name for logic
             dummy_date = datetime.date(target_year, target_month, 1)
             month_name = dummy_date.strftime("%B")
 
-            # SKIP APRIL ENTIRELY (Optimization to avoid API call if month is April)
-            if target_month == 4:
+            # --- STRICT APRIL BLOCK ---
+            # Don't even ask the server if it's April
+            if month_name == "April":
                 continue
+            # --------------------------
 
             dates = check_service_month(target_year, target_month, service_id)
             
@@ -129,8 +136,7 @@ def run_checks():
                 for d_str in dates:
                     d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
 
-                    # STRICT FILTER: Discard any date that is in April
-                    # (This handles the spill-over days like '01 April' appearing in March view)
+                    # Double Check: Ensure date is not in April (e.g. 1st April spilling into March view)
                     if d_obj.month == 4:
                         continue
 
@@ -146,13 +152,16 @@ def run_checks():
                     nice_date = d_obj.strftime("%d %B")
                     
                     entry = f"• {nice_date}: {time_str}"
-                    # Store under the actual month of the date found
+                    
+                    # Store data under the actual month of the slot
                     actual_month_name = d_obj.strftime("%B")
-                    results[service_name][actual_month_name].append(entry)
+                    if actual_month_name != "April": # Triple check
+                        results[service_name][actual_month_name].append(entry)
+                    
                     time.sleep(0.5)
             else:
-                # Only log 'Nothing' if we are strictly in the target month to avoid clutter
-                results[service_name][month_name].append("Nothing")
+                if month_name != "April":
+                    results[service_name][month_name].append("Nothing")
         
         time.sleep(1)
 
@@ -164,8 +173,7 @@ def run_checks():
             final_msg += f"<b>{service}</b>\n"
             
             for month, entries in months_data.items():
-                if month == "April": # Double check to ensure April never prints
-                    continue
+                if month == "April": continue
 
                 real_entries = [e for e in entries if e != "Nothing"]
                 if not real_entries:
