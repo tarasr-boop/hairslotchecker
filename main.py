@@ -20,7 +20,7 @@ SERVICES_TO_CHECK = {
     "🦁 Curly hair (1.5 hours)": "1802702:SV"
 }
 
-# --- NEW: SESSION SETUP ---
+# --- SESSION SETUP ---
 session = requests.Session()
 session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -42,12 +42,9 @@ def send_notification(message):
 def set_service_session(service_id):
     """
     Sends the POST request to 'lock' the specific service into the session.
-    This is the 'Magic Switch' required before checking dates.
     """
     url = f"https://book.gettimely.com/Booking/Service?obg={BUSINESS_ID}"
     
-    # We map the specific service ID to the Staff ID (Taras)
-    # This mimics the form submission exactly.
     payload = {
         "OnlineBookingMultiServiceEnabled": "True",
         "LocationId": "0",
@@ -55,10 +52,7 @@ def set_service_session(service_id):
         "BookableTimeSlotItemIds": service_id
     }
     
-    # Verify Content-Type is correct for a form submission
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
     try:
         response = session.post(url, data=payload, headers=headers, timeout=10)
@@ -69,17 +63,15 @@ def set_service_session(service_id):
 
 def get_specific_times(date_str):
     url = "https://book.gettimely.com/booking/gettimeslots"
-    # Note: We removed 'BookableTimeSlotItemIds' here because the session (POST) now handles it.
     params = {
         "obg": BUSINESS_ID,
         "dateSelected": date_str,
-        "staffId": "-1",  # "Any staff" (but we locked Taras in the POST)
+        "staffId": "-1", 
         "tzId": "57"
     }
 
     try:
         response = session.get(url, params=params, timeout=10)
-        
         times = re.findall(r'\d{1,2}:\d{2}\s*(?:am|pm)', response.text, re.IGNORECASE)
         unique_times = sorted(list(set(times)))
         
@@ -92,7 +84,6 @@ def get_specific_times(date_str):
 
 def check_service_month(year, month):
     url = "https://book.gettimely.com/Booking/GetOpenDates"
-    # Note: Removed 'BookableTimeSlotItemIds' here as well.
     params = {
         "obg": BUSINESS_ID,
         "month": month,
@@ -120,12 +111,12 @@ def run_checks():
     today = datetime.date.today()
     
     results = defaultdict(lambda: defaultdict(list))
-    has_found_any = False
-
+    
+    # We iterate through both services
     for service_name, service_id in SERVICES_TO_CHECK.items():
         print(f"\n🔎 Checking {service_name}...")
         
-        # 1. Clear cookies to start fresh for this service
+        # 1. Clear cookies to ensure clean state
         session.cookies.clear()
         
         # 2. PERFORM THE MAGIC SWITCH (POST Request)
@@ -133,7 +124,7 @@ def run_checks():
             print(f"   ⚠️ Failed to set session for {service_name}. Skipping...")
             continue
 
-        # Check Today + Next 2 Months (Total 3)
+        # Check Today + Next 2 Months (Total 3 months)
         for i in range(3): 
             target_month = today.month + i
             target_year = today.year
@@ -144,19 +135,21 @@ def run_checks():
             dummy_date = datetime.date(target_year, target_month, 1)
             month_name = dummy_date.strftime("%B")
 
-            # SKIP APRIL (As per your request)
+            # SKIP APRIL
             if month_name == "April":
                 continue
 
-            # 3. Check dates (Now uses the session established in step 2)
+            # 3. Check dates 
             dates = check_service_month(target_year, target_month)
             
             if dates:
                 print(f"   Found {len(dates)} days in {month_name}")
+                month_has_valid_slots = False
+                
                 for d_str in dates:
                     d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
                     
-                    # Date spillover check
+                    # Date spillover check (just in case)
                     if d_obj.month == 4:
                         continue
 
@@ -165,7 +158,7 @@ def run_checks():
                     if time_str == "No fitting slots":
                         continue
 
-                    has_found_any = True
+                    month_has_valid_slots = True
                     nice_date = d_obj.strftime("%d %B")
                     entry = f"• {nice_date}: {time_str}"
                     
@@ -173,28 +166,36 @@ def run_checks():
                     if actual_month_name != "April":
                         results[service_name][actual_month_name].append(entry)
                     time.sleep(0.5)
+                
+                # If we found dates but none had fitting slots, mark as Nothing
+                if not month_has_valid_slots:
+                     if month_name != "April":
+                        results[service_name][month_name].append("Nothing")
             else:
+                # API returned no dates at all
                 if month_name != "April":
                     results[service_name][month_name].append("Nothing")
         
         time.sleep(1)
 
-    if has_found_any:
-        final_msg = "🚨 <b>HAIR BY TARAS UPDATE</b>\n"
-        for service, months_data in results.items():
-            final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service}</b>\n"
-            for month, entries in months_data.items():
-                if month == "April": continue
-                
-                real_entries = [e for e in entries if e != "Nothing"]
-                if real_entries:
-                    final_msg += f"\n📅 <b>{month}:</b>\n" + "\n".join(real_entries) + "\n"
-        
-        final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
-        send_notification(final_msg)
-        print("Notification sent!")
-    else:
-        print("\nNo dates found.")
+    # --- FINAL MESSAGE CONSTRUCTION ---
+    final_msg = "🚨 <b>HAIR BY TARAS UPDATE</b>\n"
+    
+    for service, months_data in results.items():
+        final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service}</b>\n"
+        for month, entries in months_data.items():
+            if month == "April": continue
+            
+            # Combine entries. If it contains "Nothing", it prints "Nothing".
+            if entries:
+                # We simply join whatever is in the list (Slots or "Nothing")
+                final_msg += f"\n📅 <b>{month}:</b>\n" + "\n".join(entries) + "\n"
+
+    final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
+    
+    # SEND NOTIFICATION ALWAYS (To confirm the scheduler is running)
+    send_notification(final_msg)
+    print("Notification sent!")
 
 if __name__ == "__main__":
     run_checks()
