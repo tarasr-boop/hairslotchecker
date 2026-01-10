@@ -280,11 +280,10 @@ def edit_message_raw(chat_id, message_id, text):
         return False
 
 # --- SINGLE MESSAGE MANAGEMENT ---
-def show_content(chat_id, text, force_keyboard=False):
+def show_content(chat_id, text):
     """
     Show content in the single content message.
-    Edits existing message or creates new one.
-    Only sends keyboard if force_keyboard=True or no message exists yet.
+    Edits existing message or creates new one with keyboard.
     """
     # Try to edit existing content message
     if chat_id in chat_content_message:
@@ -292,10 +291,10 @@ def show_content(chat_id, text, force_keyboard=False):
             return
         # Edit failed, delete old message
         delete_message(chat_id, chat_content_message[chat_id])
+        del chat_content_message[chat_id]
     
-    # Send new message - only include keyboard if forced
-    reply_markup = REPLY_KEYBOARD if force_keyboard else None
-    msg_id = send_message_raw(chat_id, text, reply_markup)
+    # Send new message with keyboard (needed when message was deleted)
+    msg_id = send_message_raw(chat_id, text, REPLY_KEYBOARD)
     if msg_id:
         chat_content_message[chat_id] = msg_id
 
@@ -322,7 +321,7 @@ def show_wrong_password(chat_id):
             chat_content_message[chat_id] = msg_id
 
 def show_welcome(chat_id):
-    """Show welcome message WITH keyboard (only time we force it)."""
+    """Show welcome message WITH keyboard."""
     # Delete old message first
     if chat_id in chat_content_message:
         delete_message(chat_id, chat_content_message[chat_id])
@@ -339,7 +338,6 @@ Welcome to the <b>Hair Appointment Bot</b> ✂️
 
 <i>The menu is now at the bottom of your screen!</i>"""
     
-    # Force keyboard on welcome
     msg_id = send_message_raw(chat_id, text, REPLY_KEYBOARD)
     if msg_id:
         chat_content_message[chat_id] = msg_id
@@ -403,8 +401,7 @@ def handle_resubscribe(chat_id):
 You'll now receive notifications when slots open up.
 
 Use the buttons below to interact."""
-    # Force keyboard when re-subscribing
-    show_content(chat_id, text, force_keyboard=True)
+    show_content(chat_id, text)
 
 # --- APPOINTMENT CHECKING ---
 def set_service_session(service_id):
