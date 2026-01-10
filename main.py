@@ -4,6 +4,7 @@ import datetime
 import time
 import re
 from collections import defaultdict
+import pytz
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.environ['TELEGRAM_TOKEN']
@@ -20,6 +21,9 @@ SERVICES_TO_CHECK = {
     "Long hair (1.5 hours)": "1802702:SV"
 }
 
+# Melbourne timezone
+MELBOURNE_TZ = pytz.timezone('Australia/Melbourne')
+
 # --- SESSION SETUP ---
 session = requests.Session()
 session.headers.update({
@@ -29,6 +33,10 @@ session.headers.update({
     "Referer": f"https://book.gettimely.com/Booking/Service?obg={BUSINESS_ID}",
     "X-Requested-With": "XMLHttpRequest"
 })
+
+def get_melbourne_time():
+    """Get current time in Melbourne timezone."""
+    return datetime.datetime.now(MELBOURNE_TZ)
 
 def send_notification(message):
     """Send Telegram notification to all recipients."""
@@ -68,11 +76,12 @@ def check_for_commands():
         
         # Handle commands
         if text in ['/status', 'status', '/check', 'check']:
+            melbourne_time = get_melbourne_time()
             status_msg = f"✅ <b>Bot Status</b>\n\n"
             status_msg += f"🤖 Bot is running normally\n"
-            status_msg += f"🕐 Last check: {datetime.datetime.now().strftime('%d %B %Y at %I:%M %p')}\n"
+            status_msg += f"🕐 Last check: {melbourne_time.strftime('%d %B %Y at %I:%M %p')}\n"
             status_msg += f"📅 Checking next 30 days\n\n"
-            status_msg += f"<i>Automated checks run every 10 minutes</i>"
+            status_msg += f"<i>Automated checks run every 6 minutes</i>"
             
             send_notification(status_msg)
             
@@ -83,8 +92,13 @@ def check_for_commands():
             return True
         
         elif text in ['/checknow', 'check now', 'now']:
-            send_notification("🔍 <b>Manual Check Started</b>\n\nChecking for available slots...")
-            return 'run_check'
+            send_notification("🔍 <b>Manual Check Started</b>\n\nChecking for available slots in the next 3 months...")
+            
+            # Mark message as read
+            update_id = latest_update.get('update_id')
+            requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={update_id + 1}", timeout=5)
+            
+            return 'run_full_check'
         
     except Exception as e:
         print(f"Command check error: {e}")
@@ -194,8 +208,7 @@ def check_service_month(year, month):
 
 def is_status_check():
     """
-    Determine if this is a status check run (daily at 7 PM).
-    We check if the current hour is 19 (7 PM).
+    Determine if this is a status check run (daily at 7 PM Melbourne time).
     """
     # Get environment variable to force status check (for testing)
     force_status = os.environ.get('FORCE_STATUS_CHECK', 'false').lower() == 'true'
@@ -203,47 +216,66 @@ def is_status_check():
     if force_status:
         return True
     
-    # Check if it's 7 PM
-    now = datetime.datetime.now()
-    return now.hour == 19
+    # Check if it's 7 PM in Melbourne
+    melbourne_time = get_melbourne_time()
+    return melbourne_time.hour == 19
 
-def run_checks():
-    """Main function to check availability for all services."""
+def run_checks(full_check=False):
+    """Main function to check availability for all services.
+    
+    Args:
+        full_check: If True, checks current month + next 2 months. 
+                   If False, checks next 30 days only.
+    """
     print("--- Starting Session Check ---")
     
-    # First, check for any commands
-    command_result = check_for_commands()
-    if command_result == True:
-        print("Status command received and responded to")
-        return
-    # If command_result is 'run_check', continue with the check
+    # First, check for any commands (only if not already in full check mode)
+    if not full_check:
+        command_result = check_for_commands()
+        if command_result == True:
+            print("Status command received and responded to")
+            return
+        elif command_result == 'run_full_check':
+            print("Full check requested via command")
+            full_check = True
     
-    today = datetime.date.today()
-    cutoff_date = today + datetime.timedelta(days=30)
+    melbourne_time = get_melbourne_time()
+    today = melbourne_time.date()
     
     status_check = is_status_check()
     
-    print(f"Today: {today}")
-    print(f"Checking next 30 days until: {cutoff_date}")
+    print(f"Today (Melbourne): {today}")
+    print(f"Full check mode: {full_check}")
     print(f"Status check mode: {status_check}")
     
-    results = defaultdict(list)
+    results = defaultdict(lambda: defaultdict(list))
     found_any_slots = False
     
-    # Determine which months to check (current month + next month to cover 30 days)
+    # Determine which months to check
     months_to_check = []
     current_month = today.month
     current_year = today.year
     
-    months_to_check.append((current_year, current_month))
-    
-    # Add next month
-    next_month = current_month + 1
-    next_year = current_year
-    if next_month > 12:
-        next_month = 1
-        next_year += 1
-    months_to_check.append((next_year, next_month))
+    if full_check:
+        # Check current month + next 2 months
+        for i in range(3):
+            target_month = current_month + i
+            target_year = current_year
+            if target_month > 12:
+                target_month -= 12
+                target_year += 1
+            months_to_check.append((target_year, target_month))
+    else:
+        # Check only next 30 days (current month + next month)
+        cutoff_date = today + datetime.timedelta(days=30)
+        months_to_check.append((current_year, current_month))
+        
+        next_month = current_month + 1
+        next_year = current_year
+        if next_month > 12:
+            next_month = 1
+            next_year += 1
+        months_to_check.append((next_year, next_month))
     
     # Iterate through both services
     for service_name, service_id in SERVICES_TO_CHECK.items():
@@ -262,14 +294,20 @@ def run_checks():
             dates = check_service_month(year, month)
             
             if dates:
-                print(f"   Found {len(dates)} days in {datetime.date(year, month, 1).strftime('%B')}")
+                month_name = datetime.date(year, month, 1).strftime('%B')
+                print(f"   Found {len(dates)} days in {month_name}")
                 
                 for d_str in dates:
                     d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d").date()
                     
-                    # ONLY process dates within the next 30 days
-                    if d_obj < today or d_obj > cutoff_date:
-                        continue
+                    if full_check:
+                        # For full check: only include dates in the target months
+                        if d_obj.month != month:
+                            continue
+                    else:
+                        # For 30-day check: only include dates within next 30 days
+                        if d_obj < today or d_obj > cutoff_date:
+                            continue
                     
                     time_str = get_specific_times(d_str)
                     
@@ -279,7 +317,9 @@ def run_checks():
                     found_any_slots = True
                     nice_date = d_obj.strftime("%d %B")
                     entry = f"• {nice_date}: {time_str}"
-                    results[service_name].append(entry)
+                    
+                    actual_month_name = d_obj.strftime("%B")
+                    results[service_name][actual_month_name].append(entry)
                     
                     time.sleep(0.5)
         
@@ -290,25 +330,33 @@ def run_checks():
         # --- SLOTS FOUND MESSAGE ---
         final_msg = "🚨 <b>Update</b>\n"
         
-        for service_name, entries in results.items():
-            if entries:
+        for service_name, months_data in results.items():
+            if months_data:
                 final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service_name}</b>\n"
-                final_msg += "\n".join(entries) + "\n"
+                
+                for month_name, entries in months_data.items():
+                    final_msg += f"\n📅 <b>{month_name}:</b>\n"
+                    final_msg += "\n".join(entries) + "\n"
 
         final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
         
         send_notification(final_msg)
         print("✅ Slots found! Notification sent!")
         
-    elif status_check:
-        # --- DAILY STATUS MESSAGE (no slots found) ---
-        status_msg = f"✅ <b>Daily Status Check</b>\n\n"
-        status_msg += f"Script is running normally.\n"
-        status_msg += f"No appointments available in the next 30 days.\n\n"
-        status_msg += f"<i>Checked: {datetime.datetime.now().strftime('%d %B %Y at %I:%M %p')}</i>"
+    elif status_check or full_check:
+        # --- DAILY STATUS MESSAGE (no slots found) or manual check with no results ---
+        if full_check:
+            status_msg = f"❌ <b>No Slots Available</b>\n\n"
+            status_msg += f"No appointments found in the next 3 months.\n\n"
+        else:
+            status_msg = f"✅ <b>Daily Status Check</b>\n\n"
+            status_msg += f"Script is running normally.\n"
+            status_msg += f"No appointments available in the next 30 days.\n\n"
+        
+        status_msg += f"<i>Checked: {get_melbourne_time().strftime('%d %B %Y at %I:%M %p')}</i>"
         
         send_notification(status_msg)
-        print("✅ Daily status check sent (no slots found)")
+        print(f"✅ Status notification sent ({'manual check' if full_check else 'daily status'})")
         
     else:
         # Regular check with no slots - stay silent
