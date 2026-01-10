@@ -22,8 +22,6 @@ print(f"Bot token loaded: {BOT_TOKEN[:10]}...", flush=True)
 
 # ---------------------------------------------------------
 # NEW: GET THE RENDER URL TO PING SELF
-# You must set 'RENDER_EXTERNAL_URL' in Render Environment Variables
-# Example: https://your-app-name.onrender.com
 RENDER_EXTERNAL_URL = os.environ.get('RENDER_EXTERNAL_URL')
 # ---------------------------------------------------------
 
@@ -43,16 +41,15 @@ RATE_LIMIT_REQUESTS = 20
 RATE_LIMIT_WINDOW = 60
 
 # --- JSONBIN STORAGE (FREE PERSISTENT STORAGE) ---
-# Sign up at https://jsonbin.io and get your API key
 JSONBIN_API_KEY = os.environ.get('JSONBIN_API_KEY', '')
-JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID', '')  # Create a bin and put ID here
+JSONBIN_BIN_ID = os.environ.get('JSONBIN_BIN_ID', '')
 
 # Global variables
 active_chat_ids = set()
 authenticated_users = set()
 last_check_string = "Not checked yet"
 last_slot_found_time = None
-last_slots_hash = None  # Track slot changes by hash
+last_slots_hash = None
 user_request_times = defaultdict(list)
 rate_limit_lock = Lock()
 chat_content_message = {}
@@ -156,7 +153,7 @@ def log(message):
     """Print with flush for immediate output on Render"""
     print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {message}", flush=True)
 
-# --- PERSISTENT STORAGE (JSONBin.io - FREE) ---
+# --- PERSISTENT STORAGE (JSONBin.io) ---
 def save_users():
     """Save users to JSONBin (persistent) with fallback to local file"""
     with storage_lock:
@@ -187,7 +184,7 @@ def save_users():
             except Exception as e:
                 log(f"⚠️ JSONBin error: {e}")
         
-        # Fallback to local file (will be lost on restart)
+        # Fallback to local file
         try:
             with open("active_users.json", 'w') as f:
                 json.dump(data, f)
@@ -326,7 +323,6 @@ def delete_message(chat_id, message_id):
         log(f"Error deleting message: {e}")
 
 def send_message_raw(chat_id, text, reply_markup=None, retry=3):
-    """Send a message and return the message_id with retry logic."""
     for attempt in range(retry):
         try:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -350,25 +346,20 @@ def send_message_raw(chat_id, text, reply_markup=None, retry=3):
             else:
                 error = result.get('description', 'Unknown error')
                 log(f"Send FAILED: {error}")
-                
-                # If user blocked the bot, remove them
                 if 'blocked' in error.lower() or 'deactivated' in error.lower():
                     active_chat_ids.discard(chat_id)
                     authenticated_users.discard(chat_id)
                     save_users()
                     return None
-                    
         except requests.exceptions.Timeout:
             log(f"Timeout on attempt {attempt+1}")
             time.sleep(2 ** attempt)
         except Exception as e:
             log(f"Exception sending message: {e}")
             time.sleep(2 ** attempt)
-    
     return None
 
 def edit_message_raw(chat_id, message_id, text, retry=2):
-    """Edit a message with retry logic."""
     for attempt in range(retry):
         try:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
@@ -379,10 +370,8 @@ def edit_message_raw(chat_id, message_id, text, retry=2):
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True
             }
-            
             response = requests.post(url, json=payload, timeout=10)
             result = response.json()
-            
             if result.get('ok'):
                 return True
             else:
@@ -392,39 +381,28 @@ def edit_message_raw(chat_id, message_id, text, retry=2):
                 if 'message to edit not found' in error_desc.lower():
                     return False
                 log(f"Edit FAILED: {error_desc}")
-                
         except Exception as e:
             log(f"Exception editing message: {e}")
             time.sleep(1)
-    
     return False
 
-# --- SINGLE MESSAGE MANAGEMENT (FIXED SECTION) ---
+# --- SINGLE MESSAGE MANAGEMENT ---
 def show_content(chat_id, text):
-    """Show content seamlessly by sending NEW before deleting OLD."""
     log(f"show_content called for {chat_id}")
-    
     old_message_id = chat_content_message.get(chat_id)
 
-    # 1. Try to Edit existing message first (Most seamless)
     if old_message_id:
         if edit_message_raw(chat_id, old_message_id, text):
-            return  # Edit successful, nothing else to do
+            return
 
-    # 2. If Edit failed (or didn't exist), Send the NEW message FIRST
     msg_id = send_message_raw(chat_id, text, REPLY_KEYBOARD)
 
-    # 3. Update the tracker with the new ID
     if msg_id:
         chat_content_message[chat_id] = msg_id
-
-        # 4. Clean up the OLD message AFTER the new one is visible
         if old_message_id:
-            # We use a thread so we don't block main loop waiting for delete
             Thread(target=delete_message, args=(chat_id, old_message_id)).start()
 
 def show_auth_prompt(chat_id):
-    """Show password prompt - NO keyboard."""
     if chat_id in chat_content_message:
         delete_message(chat_id, chat_content_message[chat_id])
         del chat_content_message[chat_id]
@@ -435,7 +413,6 @@ def show_auth_prompt(chat_id):
         chat_content_message[chat_id] = msg_id
 
 def show_wrong_password(chat_id):
-    """Show wrong password message - NO keyboard."""
     text = "❌ <b>Incorrect password</b>\n\nPlease try again:"
     if chat_id in chat_content_message:
         edit_message_raw(chat_id, chat_content_message[chat_id], text)
@@ -445,7 +422,6 @@ def show_wrong_password(chat_id):
             chat_content_message[chat_id] = msg_id
 
 def show_welcome(chat_id):
-    """Show welcome message WITH keyboard."""
     if chat_id in chat_content_message:
         delete_message(chat_id, chat_content_message[chat_id])
         del chat_content_message[chat_id]
@@ -466,7 +442,6 @@ Welcome to the <b>Hair Appointment Bot</b> ✂️
         chat_content_message[chat_id] = msg_id
 
 def show_unsubscribed(chat_id):
-    """Show unsubscribed message and REMOVE keyboard."""
     if chat_id in chat_content_message:
         delete_message(chat_id, chat_content_message[chat_id])
         del chat_content_message[chat_id]
@@ -489,9 +464,7 @@ def handle_status(chat_id):
 
 def handle_check_now(chat_id):
     show_content(chat_id, "🔍 <b>Checking next 3 months...</b>\n\n⏳ Please wait...")
-    
     found_any, results, _ = do_slot_check(full_check=True)
-    
     if found_any:
         text = format_results_simple(results)
     else:
@@ -500,7 +473,6 @@ def handle_check_now(chat_id):
 No appointments available in the next 3 months.
 
 I'll notify you automatically when something opens up!"""
-    
     show_content(chat_id, text)
 
 def handle_haircut_advice(chat_id):
@@ -527,7 +499,6 @@ Use the buttons below to interact."""
 
 # --- APPOINTMENT CHECKING ---
 def set_service_session(service_id, max_retries=3):
-    """Set up booking session with retry logic."""
     url = f"https://book.gettimely.com/Booking/Service?obg={BUSINESS_ID}"
     payload = {
         "OnlineBookingMultiServiceEnabled": "True",
@@ -536,7 +507,6 @@ def set_service_session(service_id, max_retries=3):
     }
     payload[f"ServiceStaffIds[{service_id}]"] = STAFF_ID
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    
     for attempt in range(max_retries):
         try:
             response = session.post(url, data=payload, headers=headers, timeout=15)
@@ -547,10 +517,8 @@ def set_service_session(service_id, max_retries=3):
             log(f"Timeout setting service (attempt {attempt+1})")
         except Exception as e:
             log(f"Error setting service: {e}")
-        
         if attempt < max_retries - 1:
             time.sleep(2 ** attempt)
-    
     return False
 
 def parse_time_to_minutes(time_str):
@@ -568,10 +536,8 @@ def parse_time_to_minutes(time_str):
     return hours * 60 + minutes
 
 def get_specific_times(date_str, max_retries=2):
-    """Get time slots for a specific date with retry logic."""
     url = "https://book.gettimely.com/booking/gettimeslots"
     params = {"obg": BUSINESS_ID, "dateSelected": date_str, "staffId": "-1", "tzId": "57"}
-    
     for attempt in range(max_retries):
         try:
             response = session.get(url, params=params, timeout=15)
@@ -583,14 +549,11 @@ def get_specific_times(date_str, max_retries=2):
             log(f"Error getting times for {date_str}: {e}")
             if attempt < max_retries - 1:
                 time.sleep(1)
-    
     return None
 
 def check_service_month(year, month, max_retries=2):
-    """Check for open dates in a month with retry logic."""
     url = "https://book.gettimely.com/Booking/GetOpenDates"
     params = {"obg": BUSINESS_ID, "month": month, "year": year, "staffId": "-1", "tzId": "57"}
-    
     for attempt in range(max_retries):
         try:
             response = session.get(url, params=params, timeout=15)
@@ -605,22 +568,278 @@ def check_service_month(year, month, max_retries=2):
             log(f"Invalid JSON response for {month}/{year}")
         except Exception as e:
             log(f"Error checking month {month}/{year}: {e}")
-        
         if attempt < max_retries - 1:
             time.sleep(1)
-    
     return []
 
 def hash_slots(results):
-    """Create a hash of current slots to detect changes."""
     slot_data = []
     for service_name in sorted(results.keys()):
         for date_obj, time_str in sorted(results[service_name], key=lambda x: x[0]):
             slot_data.append(f"{service_name}|{date_obj}|{time_str}")
-    
     if not slot_data:
         return None
-    
     return hashlib.md5("|".join(slot_data).encode()).hexdigest()
 
-def do_slot_check(
+def do_slot_check(full_check=False):
+    global last_slot_found_time, last_slots_hash
+    melbourne_time = get_melbourne_time()
+    today = melbourne_time.date()
+    results = defaultdict(list)
+    found_any = False
+    
+    months_to_check = []
+    current_month = today.month
+    current_year = today.year
+    
+    if full_check:
+        for i in range(3):
+            target_month = current_month + i
+            target_year = current_year
+            if target_month > 12:
+                target_month -= 12
+                target_year += 1
+            months_to_check.append((target_year, target_month))
+    else:
+        cutoff = today + datetime.timedelta(days=30)
+        months_to_check.append((current_year, current_month))
+        next_month = current_month + 1
+        next_year = current_year
+        if next_month > 12:
+            next_month = 1
+            next_year += 1
+        months_to_check.append((next_year, next_month))
+    
+    cutoff_date = today + datetime.timedelta(days=30 if not full_check else 90)
+    
+    for service_name, service_id in SERVICES_TO_CHECK.items():
+        log(f"Checking {service_name}...")
+        session.cookies.clear()
+        if not set_service_session(service_id):
+            log(f"⚠️ Failed to set session for {service_name}")
+            continue
+
+        for year, month in months_to_check:
+            dates = check_service_month(year, month)
+            if dates:
+                for d_str in dates:
+                    try:
+                        d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d").date()
+                    except ValueError:
+                        continue
+                    if d_obj < today or d_obj > cutoff_date:
+                        continue
+                    if full_check and d_obj.month != month:
+                        continue
+                    
+                    time_str = get_specific_times(d_str)
+                    if time_str:
+                        found_any = True
+                        results[service_name].append((d_obj, time_str))
+                    time.sleep(0.3)
+            time.sleep(0.5)
+    
+    update_last_check_time()
+    current_hash = hash_slots(results) if found_any else None
+    is_new_slots = found_any and current_hash != last_slots_hash
+    
+    if found_any:
+        last_slot_found_time = get_melbourne_time()
+        last_slots_hash = current_hash
+        save_users()
+    
+    return found_any, results, is_new_slots
+
+def format_results_simple(results):
+    msg = "🎉 <b>Slots Found!</b>\n"
+    for service_name, slots in results.items():
+        if slots:
+            msg += f"\n<b>{service_name}</b>\n"
+            for date_obj, time_str in sorted(slots, key=lambda x: x[0]):
+                nice_date = f"{date_obj.day} {date_obj.strftime('%B')}"
+                msg += f"• {nice_date}: {time_str}\n"
+    msg += "\n<a href='https://bookings.gettimely.com/hairbytaras/book'>📅 Book Now</a>"
+    return msg
+
+def broadcast_slots(message):
+    sent_count = 0
+    for chat_id in list(active_chat_ids):
+        if chat_id in authenticated_users:
+            show_content(chat_id, message)
+            sent_count += 1
+            time.sleep(0.1)
+    log(f"Broadcast sent to {sent_count} users")
+
+# --- SELF-PING TO KEEP ALIVE ---
+def run_self_ping():
+    log("🚀 Starting Self-Ping thread...")
+    if not RENDER_EXTERNAL_URL:
+        log("⚠️ WARNING: RENDER_EXTERNAL_URL not set!")
+        return
+
+    ping_url = f"{RENDER_EXTERNAL_URL.rstrip('/')}/ping"
+    log(f"🎯 Will ping {ping_url} every 10 minutes")
+    
+    while True:
+        try:
+            time.sleep(600)
+            log(f"⏰ Sending self-ping to {ping_url}...")
+            response = requests.get(ping_url, timeout=10)
+            log(f"✅ Self-ping status: {response.status_code}")
+        except Exception as e:
+            log(f"❌ Self-ping failed: {e}")
+
+# --- BACKGROUND CHECK LOOP ---
+def automated_check_loop():
+    log("Starting automated check loop...")
+    consecutive_errors = 0
+    while True:
+        try:
+            log(f"--- Auto Check at {get_melbourne_time().strftime('%I:%M %p')} ---")
+            found_any, results, is_new_slots = do_slot_check(full_check=False)
+            
+            if is_new_slots:
+                log("🆕 NEW/CHANGED SLOTS! Notifying...")
+                broadcast_slots(format_results_simple(results))
+            elif found_any:
+                log("✅ Slots exist but unchanged")
+            else:
+                log("❌ No slots")
+            consecutive_errors = 0
+            
+            mt = get_melbourne_time()
+            if mt.hour == 19 and mt.minute < 3:
+                report = f"""📊 <b>Daily Report</b>
+
+🤖 Bot running normally
+🕐 Last check: {last_check_string}
+📅 Last slot: {get_time_since_last_slot()}
+👥 Active users: {len(active_chat_ids)}"""
+                broadcast_slots(report)
+            save_users()
+        except Exception as e:
+            log(f"❌ Error in check loop: {e}")
+            consecutive_errors += 1
+            if consecutive_errors >= 5:
+                log("⚠️ Too many consecutive errors, waiting 5 minutes...")
+                time.sleep(300)
+                consecutive_errors = 0
+        time.sleep(CHECK_INTERVAL)
+
+# --- MAIN BOT LOOP ---
+def handle_telegram_updates():
+    log("Starting Telegram bot...")
+    load_users()
+    time.sleep(2)
+    for chat_id in list(active_chat_ids):
+        if chat_id in authenticated_users:
+            show_content(chat_id, "🔄 <b>Bot Restarted</b>\n\nI'm back online and monitoring for slots!")
+    
+    offset = None
+    errors = 0
+    tg_session = requests.Session()
+    
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+            params = {"timeout": 30, "allowed_updates": ["message"]}
+            if offset:
+                params["offset"] = offset
+            
+            response = tg_session.get(url, params=params, timeout=40)
+            if response.status_code != 200:
+                log(f"HTTP error: {response.status_code}")
+                errors += 1
+                time.sleep(5)
+                continue
+            
+            data = response.json()
+            if not data.get('ok'):
+                log(f"API error: {data}")
+                errors += 1
+                time.sleep(5)
+                continue
+            errors = 0
+            
+            for update in data.get('result', []):
+                offset = update['update_id'] + 1
+                if 'message' not in update:
+                    continue
+                
+                msg = update['message']
+                chat_id = msg['chat']['id']
+                msg_id = msg['message_id']
+                text = msg.get('text', '').strip()
+                log(f"=== Received from {chat_id}: '{text}' ===")
+                
+                Thread(target=lambda cid=chat_id, mid=msg_id: (time.sleep(0.2), delete_message(cid, mid)), daemon=True).start()
+                
+                if chat_id not in authenticated_users:
+                    if text == BOT_PASSWORD:
+                        authenticated_users.add(chat_id)
+                        active_chat_ids.add(chat_id)
+                        save_users()
+                        show_welcome(chat_id)
+                    else:
+                        if text.lower() == '/start':
+                            show_auth_prompt(chat_id)
+                        else:
+                            show_wrong_password(chat_id)
+                    continue
+                
+                if not check_rate_limit(chat_id):
+                    show_content(chat_id, "⚠️ <b>Rate Limited</b>\n\nPlease wait a moment...")
+                    continue
+                
+                if chat_id not in active_chat_ids:
+                    handle_resubscribe(chat_id)
+                    continue
+                
+                if text == "📊 Status":
+                    handle_status(chat_id)
+                elif text == "🔍 Check Now":
+                    handle_check_now(chat_id)
+                elif text == "✂️ Haircut Advice":
+                    handle_haircut_advice(chat_id)
+                elif text == "🔕 Stop Notifications":
+                    handle_stop(chat_id)
+                elif text.lower() == '/start':
+                    handle_status(chat_id)
+                else:
+                    handle_status(chat_id)
+        except requests.exceptions.Timeout:
+            log("Timeout")
+            errors += 1
+            time.sleep(2)
+        except requests.exceptions.ConnectionError:
+            log("Connection error")
+            errors += 1
+            tg_session = requests.Session()
+            time.sleep(5)
+        except Exception as e:
+            log(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            errors += 1
+            time.sleep(5)
+        
+        if errors >= 5:
+            log("Too many errors, resetting...")
+            tg_session = requests.Session()
+            time.sleep(30)
+            errors = 0
+
+if __name__ == "__main__":
+    print("=" * 50, flush=True)
+    print("Hair Appointment Bot - SEAMLESS VERSION", flush=True)
+    print("=" * 50, flush=True)
+    
+    if not JSONBIN_API_KEY:
+        print("⚠️ WARNING: JSONBIN_API_KEY not set!", flush=True)
+        print("⚠️ User data will be LOST on restart!", flush=True)
+    
+    Thread(target=run_http_server, daemon=False).start()
+    time.sleep(3)
+    Thread(target=run_self_ping, daemon=True).start()
+    Thread(target=automated_check_loop, daemon=True).start()
+    handle_telegram_updates()
