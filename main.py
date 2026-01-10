@@ -20,9 +20,6 @@ SERVICES_TO_CHECK = {
     "Long hair (1.5 hours)": "1802702:SV"
 }
 
-# FOR TESTING: Set to None to use real current month, or set to a number (e.g., 4 for April)
-TEST_MONTH = 4  # Change to None when done testing
-
 # --- SESSION SETUP ---
 session = requests.Session()
 session.headers.update({
@@ -144,22 +141,50 @@ def check_service_month(year, month):
         print(f"Error checking month {year}-{month}: {e}")
         return []
 
+def is_status_check():
+    """
+    Determine if this is a status check run (daily at 7 PM).
+    We check if the current hour is 19 (7 PM) in Melbourne time.
+    """
+    # Get environment variable to force status check (for testing)
+    force_status = os.environ.get('FORCE_STATUS_CHECK', 'false').lower() == 'true'
+    
+    if force_status:
+        return True
+    
+    # Check if it's 7 PM in Melbourne (UTC+11 normally, but check system time)
+    now = datetime.datetime.now()
+    return now.hour == 19
+
 def run_checks():
     """Main function to check availability for all services."""
     print("--- Starting Session Check ---")
     today = datetime.date.today()
+    cutoff_date = today + datetime.timedelta(days=30)
     
-    # Use test month if specified, otherwise use current month
-    if TEST_MONTH is not None:
-        target_month = TEST_MONTH
-        target_year = today.year
-        print(f"*** TESTING MODE: Checking {datetime.date(target_year, target_month, 1).strftime('%B')} ***")
-    else:
-        target_month = today.month
-        target_year = today.year
+    status_check = is_status_check()
+    
+    print(f"Today: {today}")
+    print(f"Checking next 30 days until: {cutoff_date}")
+    print(f"Status check mode: {status_check}")
     
     results = defaultdict(list)
     found_any_slots = False
+    
+    # Determine which months to check (current month + next month to cover 30 days)
+    months_to_check = []
+    current_month = today.month
+    current_year = today.year
+    
+    months_to_check.append((current_year, current_month))
+    
+    # Add next month
+    next_month = current_month + 1
+    next_year = current_year
+    if next_month > 12:
+        next_month = 1
+        next_year += 1
+    months_to_check.append((next_year, next_month))
     
     # Iterate through both services
     for service_name, service_id in SERVICES_TO_CHECK.items():
@@ -173,38 +198,41 @@ def run_checks():
             print(f"   ⚠️ Failed to set session for {service_name}. Skipping...")
             continue
 
-        # Check only the current (or test) month
-        dates = check_service_month(target_year, target_month)
-        
-        if dates:
-            print(f"   Found {len(dates)} days")
+        # Check the months
+        for year, month in months_to_check:
+            dates = check_service_month(year, month)
             
-            for d_str in dates:
-                d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
+            if dates:
+                print(f"   Found {len(dates)} days in {datetime.date(year, month, 1).strftime('%B')}")
                 
-                time_str = get_specific_times(d_str)
-                
-                if time_str == "No fitting slots":
-                    continue
+                for d_str in dates:
+                    d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d").date()
+                    
+                    # ONLY process dates within the next 30 days
+                    if d_obj < today or d_obj > cutoff_date:
+                        continue
+                    
+                    time_str = get_specific_times(d_str)
+                    
+                    if time_str == "No fitting slots":
+                        continue
 
-                found_any_slots = True
-                nice_date = d_obj.strftime("%d %B")
-                entry = f"• {nice_date}: {time_str}"
-                results[service_name].append(entry)
-                
-                time.sleep(0.5)
-        else:
-            print(f"   No dates available")
+                    found_any_slots = True
+                    nice_date = d_obj.strftime("%d %B")
+                    entry = f"• {nice_date}: {time_str}"
+                    results[service_name].append(entry)
+                    
+                    time.sleep(0.5)
         
         time.sleep(1)
 
-    # ONLY send notification if we found at least one slot
+    # Send notification based on findings and whether it's a status check
     if found_any_slots:
-        # --- FINAL MESSAGE CONSTRUCTION ---
+        # --- SLOTS FOUND MESSAGE ---
         final_msg = "🚨 <b>Update</b>\n"
         
         for service_name, entries in results.items():
-            if entries:  # Only include services that have slots
+            if entries:
                 final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service_name}</b>\n"
                 final_msg += "\n".join(entries) + "\n"
 
@@ -212,8 +240,20 @@ def run_checks():
         
         send_notification(final_msg)
         print("✅ Slots found! Notification sent!")
+        
+    elif status_check:
+        # --- DAILY STATUS MESSAGE (no slots found) ---
+        status_msg = f"✅ <b>Daily Status Check</b>\n\n"
+        status_msg += f"Script is running normally.\n"
+        status_msg += f"No appointments available in the next 30 days.\n\n"
+        status_msg += f"<i>Checked: {datetime.datetime.now().strftime('%d %B %Y at %I:%M %p')}</i>"
+        
+        send_notification(status_msg)
+        print("✅ Daily status check sent (no slots found)")
+        
     else:
-        print("❌ No slots available this month. No notification sent.")
+        # Regular check with no slots - stay silent
+        print("❌ No slots available in next 30 days. No notification sent (not status check time).")
 
 if __name__ == "__main__":
     run_checks()
