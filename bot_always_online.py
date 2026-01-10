@@ -41,14 +41,58 @@ USERS_FILE = "active_users.json"
 
 # Global variables
 active_chat_ids = set()
-authenticated_users = set()  # Users who have entered the password
+authenticated_users = set()
 last_check_string = "Not checked yet"
-last_slot_found_time = None  # Track when slots were last found
-user_request_times = defaultdict(list)  # For rate limiting
+last_slot_found_time = None
+user_request_times = defaultdict(list)
 rate_limit_lock = Lock()
 
-# Esoteric & Witty Consulting-Themed Haircut Advice
-HAIRCUT_ADVICE = [
+# --- ONE-LINERS (Shuffled on startup) ---
+
+# Esoteric one-liners
+ESOTERIC_LINES = [
+    "The stars have aligned. Your split ends have not.",
+    "Mercury is in retrograde. Your hair is in disgrace.",
+    "The ancient scrolls speak of a prophecy: you need a trim.",
+    "Your aura is immaculate. Your hair, however, is chaotic.",
+    "The universe whispers: 'Book the appointment.'",
+    "Your chakras are balanced. Your layers are not.",
+    "The moon is waxing. Your hair should be waning.",
+    "I consulted the tarot. The cards said 'scissors.'",
+    "The oracle has spoken. It said 'barber. Now.'",
+    "Your third eye sees all. It sees that you need a cut.",
+    "The cosmos have a message: your ends are split.",
+    "Venus governs beauty. She's filed a complaint about your hair.",
+    "The tea leaves have settled. They spell 'H-A-I-R-C-U-T.'",
+    "Your spirit guide appeared. It was holding clippers.",
+    "The pendulum swings toward 'yes, get a trim.'",
+    "Saturn returns every 29 years. Your haircut is overdue by 3 months.",
+    "The runes are clear: ᚺᚨᛁᚱᚲᚢᛏ (that's 'haircut' in Elder Futhark).",
+]
+
+# Witty one-liners
+WITTY_LINES = [
+    "Your hair called. It wants a divorce.",
+    "I've seen better hair on a coconut.",
+    "Your hair has more issues than a magazine stand.",
+    "That's not a hairstyle, that's a cry for help.",
+    "Your hair looks like it lost a fight with a lawnmower.",
+    "Is that a hairstyle or a social experiment?",
+    "Your hair has given up. Maybe you should too. On the hair.",
+    "I'm not saying your hair is bad, but birds are circling it.",
+    "Your hair is a 'before' photo that never got an 'after.'",
+    "That hair could be used as evidence in court.",
+    "Your hair is what happens when you skip the tutorial.",
+    "I've seen tidier haystacks.",
+    "Your hair looks like it's buffering.",
+    "Is your hair a statement? Because it's saying 'help me.'",
+    "Your hair has the energy of a forgotten houseplant.",
+    "That's not bed head. That's bed, floor, and dumpster head.",
+    "Your hair is giving 'I woke up like this' but not in a good way.",
+]
+
+# Consulting one-liners
+CONSULTING_LINES = [
     "Per my last email, your hair requires immediate strategic intervention.",
     "Let's take this offline—your split ends need a private consultation.",
     "I'll need to loop in the scissors on this one.",
@@ -58,48 +102,29 @@ HAIRCUT_ADVICE = [
     "Your current style lacks synergy. Consider a trim.",
     "We need to align your hair with Q4 objectives.",
     "I'm seeing some bandwidth issues with your current length.",
-    "Let's table the haircut discussion until Mercury exits retrograde.",
     "Your hair is giving 'scope creep.' Rein it in.",
     "The deliverables are clear: you need a cut.",
     "I've done the due diligence. The recommendation is: scissors.",
     "Your hair has exceeded its sprint capacity. Time to groom the backlog.",
-    "This requires a paradigm shift. From long to short.",
     "Let's not boil the ocean—just trim the ends.",
     "Your follicles are misaligned with stakeholder expectations.",
-    "The optics on your current hairstyle are... suboptimal.",
     "We need to rightsize your hair situation.",
-    "Your style lacks vertical integration. Consider layers.",
-    "The ancient scrolls are silent on your bangs, but the consultants aren't.",
     "Your hair's burn rate is unsustainable. Cut costs. Literally.",
     "I'm flagging this as a blocker. The blocker is your hair.",
     "Let's leverage our core competencies here: booking appointments.",
-    "Your hair is technically debt. Time to refactor.",
-    "The tea leaves say 'trim.' The Gantt chart agrees.",
+    "Your hair is technical debt. Time to refactor.",
     "You're one haircut away from thought leadership.",
-    "Your current aesthetic is not best practice.",
     "I've benchmarked your hair against industry standards. It's lagging.",
     "This is a change management issue. The change is: shorter hair.",
-    "Your hair needs a retrospective. What went wrong?",
-    "The oracle has been consulted. It invoiced you and said 'yes, cut it.'",
-    "Strategically speaking, your hair is a liability.",
-    "Let's not reinvent the wheel—just get a classic cut.",
-    "Your hair is in technical debt. Time to pay it down.",
-    "The consultants recommend a full restructuring. Starting with your head.",
-    "Your style is legacy code. Time for a modern framework.",
-    "I've run the numbers. The numbers say 'barber.'",
-    "Your hair is not scalable in its current form.",
-    "This is a quick win. Low effort, high impact: haircut.",
     "The SWOT analysis is complete. Your hair is a weakness.",
     "Let's action this: book the appointment.",
-    "Your hair is not aligned with the north star metric.",
-    "I'm seeing diminishing returns on your current length.",
-    "The stakeholders have spoken. They want you trimmed.",
-    "Your hair lacks a clear value proposition.",
     "Time to sunset your current hairstyle.",
-    "The data doesn't lie. Your hair is overdue.",
     "Let's move the needle here. The needle is scissors.",
-    "Your follicular strategy needs a complete overhaul."
 ]
+
+# Combine and shuffle all one-liners
+HAIRCUT_ADVICE = ESOTERIC_LINES + WITTY_LINES + CONSULTING_LINES
+random.shuffle(HAIRCUT_ADVICE)
 
 # Session for appointment checking
 session = requests.Session()
@@ -154,7 +179,6 @@ def check_rate_limit(chat_id):
     """Check if user is within rate limit. Returns True if allowed, False if rate limited."""
     with rate_limit_lock:
         now = time.time()
-        # Clean old requests
         user_request_times[chat_id] = [t for t in user_request_times[chat_id] if now - t < RATE_LIMIT_WINDOW]
         
         if len(user_request_times[chat_id]) >= RATE_LIMIT_REQUESTS:
@@ -170,8 +194,7 @@ def get_rate_limit_remaining(chat_id):
         user_request_times[chat_id] = [t for t in user_request_times[chat_id] if now - t < RATE_LIMIT_WINDOW]
         return RATE_LIMIT_REQUESTS - len(user_request_times[chat_id])
 
-# ------------------------------------------
-
+# --- TIME FUNCTIONS ---
 def get_melbourne_time():
     """Get current time in Melbourne timezone."""
     return datetime.datetime.now(MELBOURNE_TZ)
@@ -205,6 +228,7 @@ def get_time_since_last_slot():
         days = total_seconds // 86400
         return f"{days} day{'s' if days != 1 else ''} ago"
 
+# --- TELEGRAM FUNCTIONS ---
 def send_message(chat_id, text, reply_markup=None):
     """Send message to a specific chat."""
     try:
@@ -229,35 +253,36 @@ def send_menu(chat_id):
     keyboard = {
         "inline_keyboard": [
             [
-                {"text": "📊 bot status", "callback_data": "status"},
-                {"text": "🔍 check now", "callback_data": "checknow"}
+                {"text": "📊 Bot Status", "callback_data": "status"},
+                {"text": "🔍 Check Now", "callback_data": "checknow"}
             ],
             [
-                {"text": "✂️ should i get a haircut?", "callback_data": "haircut"}
+                {"text": "✂️ Should I Get a Haircut?", "callback_data": "haircut"}
             ],
             [
-                {"text": "🔕 stop notifications", "callback_data": "stop_notifications"}
+                {"text": "🔕 Stop Notifications", "callback_data": "stop_notifications"}
             ]
         ]
     }
     
-    message = "What brings you here today?"
+    message = "What would you like to do?"
     send_message(chat_id, message, reply_markup=keyboard)
 
 def send_welcome_message(chat_id):
     """Send welcome message with bot introduction after authentication."""
-    intro = """✅ Authentication successful!
+    intro = """✅ <b>Authentication successful!</b>
 
 Welcome to the <b>Hair Appointment Bot</b> ✂️
 
 <b>How it works:</b>
 - I automatically check the booking website every 2 minutes
-- If a slot becomes available, I'll send you a notification immediately
+- If a slot becomes available, I'll notify you immediately
 - If nothing is found, I stay quiet (no spam!)
 
-<b>Manual options below:</b>
-- Check status to see if I'm running
-- Check now to manually search for slots
+<b>Your options:</b>
+- <b>Bot Status</b> - Check if I'm running
+- <b>Check Now</b> - Manually search for slots
+- <b>Should I Get a Haircut?</b> - Get some wisdom
 
 Let's find you an appointment!"""
     
@@ -265,7 +290,7 @@ Let's find you an appointment!"""
 
 def send_password_prompt(chat_id):
     """Send password prompt to unauthenticated user."""
-    message = "🔐 This bot requires authentication.\n\nPlease enter the password to continue:"
+    message = "🔐 <b>Authentication Required</b>\n\nThis bot is private. Please enter the password to continue:"
     send_message(chat_id, message)
 
 def answer_callback(callback_query_id, text):
@@ -277,6 +302,7 @@ def answer_callback(callback_query_id, text):
     except Exception as e:
         print(f"Error answering callback: {e}")
 
+# --- APPOINTMENT CHECKING FUNCTIONS ---
 def set_service_session(service_id):
     """Lock service into session."""
     url = f"https://book.gettimely.com/Booking/Service?obg={BUSINESS_ID}"
@@ -370,7 +396,6 @@ def do_slot_check(full_check=False):
     melbourne_time = get_melbourne_time()
     today = melbourne_time.date()
     
-    # Structure: {service_name: [(date_obj, time_str), ...]}
     results = defaultdict(list)
     found_any_slots = False
     
@@ -432,32 +457,28 @@ def do_slot_check(full_check=False):
         
         time.sleep(0.5)
     
-    # Update global check time
     update_last_check_time()
     
-    # Update last slot found time if we found slots
     if found_any_slots:
         last_slot_found_time = get_melbourne_time()
 
     return found_any_slots, results
 
 def format_results_simple(results):
-    """Format results in the new simple format without month grouping."""
-    final_msg = "Updates found:\n"
+    """Format results in simple format without month grouping."""
+    final_msg = "🎉 <b>Slots Found!</b>\n"
     
     for service_name, slots in results.items():
         if slots:
-            final_msg += f"\n{service_name}\n\n"
+            final_msg += f"\n<b>{service_name}</b>\n\n"
             
-            # Sort by date
             sorted_slots = sorted(slots, key=lambda x: x[0])
             
             for date_obj, time_str in sorted_slots:
-                # Full month name: "18 February"
                 nice_date = f"{date_obj.day} {date_obj.strftime('%B')}"
                 final_msg += f"• {nice_date}: {time_str}\n"
 
-    final_msg += "\n<a href='https://bookings.gettimely.com/hairbytaras/book'>Book here</a>"
+    final_msg += "\n<a href='https://bookings.gettimely.com/hairbytaras/book'>📅 Book Now</a>"
     return final_msg
 
 def broadcast_to_users(message):
@@ -468,11 +489,12 @@ def broadcast_to_users(message):
 
 def notify_restart():
     """Notify users that the bot has restarted."""
-    restart_msg = "🔄 Bot has restarted and is now running!\n\nYou will continue to receive notifications for available slots."
+    restart_msg = "🔄 <b>Bot Restarted</b>\n\nI'm back online and monitoring for available slots.\n\nYou'll receive notifications when appointments become available."
     for chat_id in list(active_chat_ids):
         if chat_id in authenticated_users:
             send_message(chat_id, restart_msg)
 
+# --- BACKGROUND THREADS ---
 def automated_check_loop():
     """Background thread that checks every 2 minutes."""
     print("Starting automated check loop (every 2 minutes)...")
@@ -493,15 +515,13 @@ def automated_check_loop():
                 print("No slots found")
                 last_slots_found = False
             else:
-                print("Slots still available (no notification)")
+                print("Slots still available (no new notification)")
             
-            # Daily status at 7 PM
             melbourne_time = get_melbourne_time()
             if melbourne_time.hour == 19 and melbourne_time.minute < 2:
-                status_msg = f"📊 Daily Report\n\n🤖 Bot running normally\n🕐 Last check: {last_check_string}"
+                status_msg = f"📊 <b>Daily Report</b>\n\n🤖 Bot running normally\n🕐 Last check: {last_check_string}\n📅 Last slot found: {get_time_since_last_slot()}"
                 broadcast_to_users(status_msg)
             
-            # Save users periodically
             save_users()
             
         except Exception as e:
@@ -509,25 +529,22 @@ def automated_check_loop():
         
         time.sleep(CHECK_INTERVAL)
 
+# --- MAIN BOT LOOP ---
 def handle_telegram_updates():
     """Main bot loop - handles messages and button presses."""
     print("Starting Telegram bot...")
     
-    # Load persisted users
     load_users()
     
-    # Notify users about restart
     if active_chat_ids:
         print("Notifying users about restart...")
         notify_restart()
     
     offset = None
     
-    # Start automated checking in background
     check_thread = Thread(target=automated_check_loop, daemon=True)
     check_thread.start()
 
-    # Start Flask server in background
     server_thread = Thread(target=run_http_server, daemon=True)
     server_thread.start()
     
@@ -568,7 +585,7 @@ def handle_telegram_updates():
                     if not check_rate_limit(chat_id):
                         answer_callback(callback_query_id, "Rate limited! Please wait.")
                         remaining_wait = RATE_LIMIT_WINDOW - (time.time() - min(user_request_times[chat_id]))
-                        send_message(chat_id, f"⚠️ Rate limited! Please wait {int(remaining_wait)} seconds before making more requests.\n\nLimit: {RATE_LIMIT_REQUESTS} requests per minute.")
+                        send_message(chat_id, f"⚠️ <b>Rate Limited</b>\n\nPlease wait {int(remaining_wait)} seconds before making more requests.\n\nLimit: {RATE_LIMIT_REQUESTS} requests per minute.")
                         continue
                     
                     active_chat_ids.add(chat_id)
@@ -576,20 +593,21 @@ def handle_telegram_updates():
                     if callback_data == 'status':
                         answer_callback(callback_query_id, "Getting status...")
                         
-                        status_msg = f"""✅ Bot Status
+                        status_msg = f"""📊 <b>Bot Status</b>
 
-🤖 Running normally
-🕐 Last check: {last_check_string}
-📅 Checking next 30 days
+🤖 Status: <b>Running</b>
+🕐 Last check: <b>{last_check_string}</b>
+📅 Last slot found: <b>{get_time_since_last_slot()}</b>
+🔍 Monitoring: Next 30 days
 
 👥 Active users: {len(active_chat_ids)}
-🔢 Your requests remaining: {get_rate_limit_remaining(chat_id)}/{RATE_LIMIT_REQUESTS} per minute"""
+🔢 Your requests: {get_rate_limit_remaining(chat_id)}/{RATE_LIMIT_REQUESTS} remaining"""
                         send_message(chat_id, status_msg)
                         send_menu(chat_id)
                         
                     elif callback_data == 'checknow':
                         answer_callback(callback_query_id, "Checking...")
-                        send_message(chat_id, "🔍 Checking next 3 months...")
+                        send_message(chat_id, "🔍 Checking next 3 months...\n\nThis may take a moment.")
                         
                         found_any_slots, results = do_slot_check(full_check=True)
                         
@@ -597,21 +615,23 @@ def handle_telegram_updates():
                             message = format_results_simple(results)
                             send_message(chat_id, message)
                         else:
-                            send_message(chat_id, "❌ No slots found in next 3 months.")
+                            send_message(chat_id, "❌ <b>No slots found</b>\n\nNo appointments available in the next 3 months.\n\nI'll notify you automatically when something opens up!")
                         
                         send_menu(chat_id)
                         
                     elif callback_data == 'haircut':
-                        answer_callback(callback_query_id, "Thinking...")
+                        answer_callback(callback_query_id, "Consulting the oracle...")
+                        
+                        # Get random advice (list is already shuffled)
                         advice = random.choice(HAIRCUT_ADVICE)
-                        send_message(chat_id, advice)
+                        send_message(chat_id, f"✂️ <i>{advice}</i>")
                         send_menu(chat_id)
                     
                     elif callback_data == 'stop_notifications':
                         answer_callback(callback_query_id, "Notifications stopped")
                         active_chat_ids.discard(chat_id)
                         save_users()
-                        send_message(chat_id, "🔕 You have been unsubscribed from notifications.\n\nYou will no longer receive automatic updates about available slots.\n\nSend any message to re-subscribe.")
+                        send_message(chat_id, "🔕 <b>Unsubscribed</b>\n\nYou will no longer receive automatic notifications.\n\nSend any message to re-subscribe.")
                 
                 # Handle text messages
                 elif 'message' in update:
@@ -621,24 +641,43 @@ def handle_telegram_updates():
                     
                     # Check if user needs to authenticate
                     if chat_id not in authenticated_users:
-                        if text.lower() == BOT_PASSWORD.lower():
+                        # Handle /start command for unauthenticated users
+                        if text.lower() == '/start':
+                            send_password_prompt(chat_id)
+                            continue
+                        
+                        # Check password (case-sensitive)
+                        if text == BOT_PASSWORD:
                             authenticated_users.add(chat_id)
                             active_chat_ids.add(chat_id)
                             save_users()
                             send_welcome_message(chat_id)
                             send_menu(chat_id)
                         else:
-                            send_password_prompt(chat_id)
+                            send_message(chat_id, "❌ <b>Incorrect password</b>\n\nPlease try again:")
                         continue
                     
-                    # Rate limiting check
+                    # --- User IS authenticated from here ---
+                    
+                    # Handle /start for authenticated users
+                    if text.lower() == '/start':
+                        active_chat_ids.add(chat_id)
+                        save_users()
+                        send_message(chat_id, "👋 <b>Welcome back!</b>\n\nYou're already authenticated.")
+                        send_menu(chat_id)
+                        continue
+                    
+                    # Rate limiting check for other messages
                     if not check_rate_limit(chat_id):
-                        send_message(chat_id, f"⚠️ Rate limited! Please wait before making more requests.\n\nLimit: {RATE_LIMIT_REQUESTS} requests per minute.")
+                        send_message(chat_id, f"⚠️ <b>Rate Limited</b>\n\nPlease wait before making more requests.\n\nLimit: {RATE_LIMIT_REQUESTS} requests per minute.")
                         continue
                     
-                    # User is authenticated, add to active and show menu
-                    active_chat_ids.add(chat_id)
-                    save_users()
+                    # Re-subscribe user if they were unsubscribed
+                    if chat_id not in active_chat_ids:
+                        active_chat_ids.add(chat_id)
+                        save_users()
+                        send_message(chat_id, "🔔 <b>Re-subscribed!</b>\n\nYou'll now receive notifications again.")
+                    
                     send_menu(chat_id)
         
         except Exception as e:
@@ -646,6 +685,10 @@ def handle_telegram_updates():
             time.sleep(5)
 
 if __name__ == "__main__":
-    print("Bot Starting...")
-    print(f"Checking every {CHECK_INTERVAL} seconds")
+    print("=" * 50)
+    print("Hair Appointment Bot Starting...")
+    print(f"Check interval: {CHECK_INTERVAL} seconds")
+    print(f"Rate limit: {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW} seconds")
+    print(f"One-liners loaded: {len(HAIRCUT_ADVICE)}")
+    print("=" * 50)
     handle_telegram_updates()
