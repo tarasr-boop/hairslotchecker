@@ -20,6 +20,9 @@ SERVICES_TO_CHECK = {
     "Long hair (1.5 hours)": "1802702:SV"
 }
 
+# FOR TESTING: Set to None to use real current month, or set to a number (e.g., 4 for April)
+TEST_MONTH = 4  # Change to None when done testing
+
 # --- SESSION SETUP ---
 session = requests.Session()
 session.headers.update({
@@ -141,16 +144,22 @@ def check_service_month(year, month):
         print(f"Error checking month {year}-{month}: {e}")
         return []
 
-def should_skip_april(month_name):
-    """Check if the month is April (to be skipped)."""
-    return month_name == "April"
-
 def run_checks():
     """Main function to check availability for all services."""
     print("--- Starting Session Check ---")
     today = datetime.date.today()
     
-    results = defaultdict(lambda: defaultdict(list))
+    # Use test month if specified, otherwise use current month
+    if TEST_MONTH is not None:
+        target_month = TEST_MONTH
+        target_year = today.year
+        print(f"*** TESTING MODE: Checking {datetime.date(target_year, target_month, 1).strftime('%B')} ***")
+    else:
+        target_month = today.month
+        target_year = today.year
+    
+    results = defaultdict(list)
+    found_any_slots = False
     
     # Iterate through both services
     for service_name, service_id in SERVICES_TO_CHECK.items():
@@ -164,93 +173,47 @@ def run_checks():
             print(f"   ⚠️ Failed to set session for {service_name}. Skipping...")
             continue
 
-        # Check today + next 2 months (total 3 months)
-        for i in range(3): 
-            target_month = today.month + i
-            target_year = today.year
-            if target_month > 12:
-                target_month -= 12
-                target_year += 1
+        # Check only the current (or test) month
+        dates = check_service_month(target_year, target_month)
+        
+        if dates:
+            print(f"   Found {len(dates)} days")
             
-            dummy_date = datetime.date(target_year, target_month, 1)
-            month_name = dummy_date.strftime("%B")
-
-            # Skip April
-            if should_skip_april(month_name):
-                continue
-
-            # Check available dates
-            dates = check_service_month(target_year, target_month)
-            
-            if dates:
-                print(f"   Found {len(dates)} days in {month_name}")
-                month_has_valid_slots = False
+            for d_str in dates:
+                d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
                 
-                for d_str in dates:
-                    d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
-                    
-                    # Skip April dates (spillover check)
-                    if d_obj.month == 4:
-                        continue
-
-                    time_str = get_specific_times(d_str)
-                    
-                    if time_str == "No fitting slots":
-                        continue
-
-                    month_has_valid_slots = True
-                    nice_date = d_obj.strftime("%d %B")
-                    entry = f"• {nice_date}: {time_str}"
-                    
-                    actual_month_name = d_obj.strftime("%B")
-                    if not should_skip_april(actual_month_name):
-                        results[service_name][actual_month_name].append(entry)
-                    
-                    time.sleep(0.5)
+                time_str = get_specific_times(d_str)
                 
-                # If we found dates but none had fitting slots, mark as Nothing
-                if not month_has_valid_slots:
-                    if not should_skip_april(month_name):
-                        results[service_name][month_name].append("Nothing")
-            else:
-                # API returned no dates at all
-                if not should_skip_april(month_name):
-                    results[service_name][month_name].append("Nothing")
+                if time_str == "No fitting slots":
+                    continue
+
+                found_any_slots = True
+                nice_date = d_obj.strftime("%d %B")
+                entry = f"• {nice_date}: {time_str}"
+                results[service_name].append(entry)
+                
+                time.sleep(0.5)
+        else:
+            print(f"   No dates available")
         
         time.sleep(1)
 
-    # --- FINAL MESSAGE CONSTRUCTION ---
-    final_msg = "💈 <b>Hair by Taras</b> — New Slots\n"
-    
-    for service, months_data in results.items():
-        # Add emoji based on service name
-        emoji = "💇‍♂️" if "Short" in service else "🦁"
-        final_msg += f"\n<b>{emoji} {service}</b>\n"
-        final_msg += "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+    # ONLY send notification if we found at least one slot
+    if found_any_slots:
+        # --- FINAL MESSAGE CONSTRUCTION ---
+        final_msg = "🚨 <b>Update</b>\n"
         
-        for month, entries in months_data.items():
-            if should_skip_april(month):
-                continue
-            
-            if entries:
-                if entries == ["Nothing"]:
-                    final_msg += f"📅 <b>{month}:</b> —\n"
-                else:
-                    final_msg += f"📅 <b>{month}:</b>\n"
-                    for entry in entries:
-                        # Convert "• 18 February: 11:00AM" to "   → 18 Feb @ 11:00AM"
-                        clean_entry = entry.replace("• ", "   → ").replace(": ", " @ ")
-                        # Shorten month names
-                        for full_month in ["January", "February", "March", "April", "May", "June", 
-                                          "July", "August", "September", "October", "November", "December"]:
-                            clean_entry = clean_entry.replace(full_month, full_month[:3])
-                        final_msg += f"{clean_entry}\n"
+        for service_name, entries in results.items():
+            if entries:  # Only include services that have slots
+                final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service_name}</b>\n"
+                final_msg += "\n".join(entries) + "\n"
 
-    final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Book Your Appointment</a>"
-    
-    # Send notification always (to confirm the scheduler is running)
-    send_notification(final_msg)
-    print("Notification sent!")
+        final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
+        
+        send_notification(final_msg)
+        print("✅ Slots found! Notification sent!")
+    else:
+        print("❌ No slots available this month. No notification sent.")
 
 if __name__ == "__main__":
     run_checks()
