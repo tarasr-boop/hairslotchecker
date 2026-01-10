@@ -17,7 +17,7 @@ if not BOT_TOKEN:
     print("ERROR: TELEGRAM_TOKEN environment variable not set!", file=sys.stderr)
     raise Exception("TELEGRAM_TOKEN environment variable not set!")
 
-print(f"Bot token loaded: {BOT_TOKEN[:10]}...")
+print(f"Bot token loaded: {BOT_TOKEN[:10]}...", flush=True)
 
 BOT_PASSWORD = "password"
 
@@ -137,6 +137,11 @@ REMOVE_KEYBOARD = {
     "remove_keyboard": True
 }
 
+# --- HELPER FUNCTION FOR LOGGING ---
+def log(message):
+    """Print with flush for immediate output on Render"""
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {message}", flush=True)
+
 # --- PERSISTENCE ---
 def save_users():
     try:
@@ -146,9 +151,9 @@ def save_users():
         }
         with open(USERS_FILE, 'w') as f:
             json.dump(data, f)
-        print(f"Saved {len(active_chat_ids)} users to file")
+        log(f"Saved {len(active_chat_ids)} users to file")
     except Exception as e:
-        print(f"Error saving users: {e}")
+        log(f"Error saving users: {e}")
 
 def load_users():
     global active_chat_ids, authenticated_users
@@ -158,9 +163,9 @@ def load_users():
                 data = json.load(f)
                 active_chat_ids = set(data.get("active_chat_ids", []))
                 authenticated_users = set(data.get("authenticated_users", []))
-            print(f"Loaded {len(active_chat_ids)} users from file")
+            log(f"Loaded {len(active_chat_ids)} users from file")
     except Exception as e:
-        print(f"Error loading users: {e}")
+        log(f"Error loading users: {e}")
 
 # --- FLASK SERVER ---
 app = Flask(__name__)
@@ -176,10 +181,10 @@ def health():
 def run_http_server():
     try:
         port = int(os.environ.get("PORT", 8080))
-        print(f"Starting Flask server on port {port}...")
+        log(f"Starting Flask server on port {port}...")
         app.run(host='0.0.0.0', port=port, threaded=True, use_reloader=False)
     except Exception as e:
-        print(f"Error starting Flask server: {e}", file=sys.stderr)
+        log(f"Error starting Flask server: {e}")
         raise
 
 # --- RATE LIMITING ---
@@ -234,7 +239,7 @@ def delete_message(chat_id, message_id):
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
         requests.post(url, json={"chat_id": chat_id, "message_id": message_id}, timeout=5)
     except Exception as e:
-        print(f"Error deleting message: {e}")
+        log(f"Error deleting message: {e}")
 
 def send_message_raw(chat_id, text, reply_markup=None):
     """Send a message and return the message_id."""
@@ -247,18 +252,25 @@ def send_message_raw(chat_id, text, reply_markup=None):
             "disable_web_page_preview": True
         }
         if reply_markup:
-            payload["reply_markup"] = reply_markup
+            # IMPORTANT: Serialize reply_markup as JSON string
+            payload["reply_markup"] = json.dumps(reply_markup)
         
+        log(f"Sending message to {chat_id}: {text[:50]}...")
         response = requests.post(url, json=payload, timeout=10)
-        if response.status_code == 200:
-            result = response.json()
-            if result.get('ok'):
-                return result.get('result', {}).get('message_id')
+        result = response.json()
+        
+        log(f"Send response: status={response.status_code}, ok={result.get('ok')}")
+        
+        if result.get('ok'):
+            msg_id = result.get('result', {}).get('message_id')
+            log(f"Message sent successfully, id={msg_id}")
+            return msg_id
         else:
-            print(f"Send message failed: {response.status_code} - {response.text}")
+            log(f"Send FAILED: {result.get('description', 'Unknown error')}")
+            return None
     except Exception as e:
-        print(f"Error sending message: {e}")
-    return None
+        log(f"Exception sending message: {e}")
+        return None
 
 def edit_message_raw(chat_id, message_id, text):
     """Edit a message. Returns True if successful."""
@@ -271,12 +283,25 @@ def edit_message_raw(chat_id, message_id, text):
             "parse_mode": "HTML",
             "disable_web_page_preview": True
         }
+        
+        log(f"Editing message {message_id} for {chat_id}: {text[:50]}...")
         response = requests.post(url, json=payload, timeout=10)
-        if response.status_code == 200:
-            return response.json().get('ok', False)
-        return False
+        result = response.json()
+        
+        log(f"Edit response: status={response.status_code}, ok={result.get('ok')}")
+        
+        if result.get('ok'):
+            log(f"Message edited successfully")
+            return True
+        else:
+            error_desc = result.get('description', 'Unknown error')
+            log(f"Edit FAILED: {error_desc}")
+            # If message wasn't modified (same content), treat as success
+            if 'message is not modified' in error_desc.lower():
+                return True
+            return False
     except Exception as e:
-        print(f"Error editing message: {e}")
+        log(f"Exception editing message: {e}")
         return False
 
 # --- SINGLE MESSAGE MANAGEMENT ---
@@ -285,21 +310,32 @@ def show_content(chat_id, text):
     Show content in the single content message.
     Edits existing message or creates new one with keyboard.
     """
+    log(f"show_content called for {chat_id}")
+    
     # Try to edit existing content message
     if chat_id in chat_content_message:
+        log(f"Found existing message {chat_content_message[chat_id]}, trying to edit")
         if edit_message_raw(chat_id, chat_content_message[chat_id], text):
+            log(f"Edit successful")
             return
         # Edit failed, delete old message
+        log(f"Edit failed, deleting old message and sending new")
         delete_message(chat_id, chat_content_message[chat_id])
         del chat_content_message[chat_id]
+    else:
+        log(f"No existing message found for {chat_id}")
     
-    # Send new message with keyboard (needed when message was deleted)
+    # Send new message with keyboard
     msg_id = send_message_raw(chat_id, text, REPLY_KEYBOARD)
     if msg_id:
         chat_content_message[chat_id] = msg_id
+        log(f"New message stored: {msg_id}")
+    else:
+        log(f"WARNING: Failed to send new message!")
 
 def show_auth_prompt(chat_id):
     """Show password prompt - NO keyboard."""
+    log(f"show_auth_prompt for {chat_id}")
     # Remove any existing content
     if chat_id in chat_content_message:
         delete_message(chat_id, chat_content_message[chat_id])
@@ -312,6 +348,7 @@ def show_auth_prompt(chat_id):
 
 def show_wrong_password(chat_id):
     """Show wrong password message - NO keyboard."""
+    log(f"show_wrong_password for {chat_id}")
     text = "❌ <b>Incorrect password</b>\n\nPlease try again:"
     if chat_id in chat_content_message:
         edit_message_raw(chat_id, chat_content_message[chat_id], text)
@@ -322,6 +359,7 @@ def show_wrong_password(chat_id):
 
 def show_welcome(chat_id):
     """Show welcome message WITH keyboard."""
+    log(f"show_welcome for {chat_id}")
     # Delete old message first
     if chat_id in chat_content_message:
         delete_message(chat_id, chat_content_message[chat_id])
@@ -341,6 +379,9 @@ Welcome to the <b>Hair Appointment Bot</b> ✂️
     msg_id = send_message_raw(chat_id, text, REPLY_KEYBOARD)
     if msg_id:
         chat_content_message[chat_id] = msg_id
+        log(f"Welcome message sent with id {msg_id}")
+    else:
+        log(f"WARNING: Failed to send welcome message!")
 
 def show_unsubscribed(chat_id):
     """Show unsubscribed message and REMOVE keyboard."""
@@ -353,6 +394,7 @@ def show_unsubscribed(chat_id):
 
 # --- COMMAND HANDLERS ---
 def handle_status(chat_id):
+    log(f"handle_status for {chat_id}")
     text = f"""📊 <b>Bot Status</b>
 
 🤖 Status: <b>Running</b>
@@ -364,6 +406,7 @@ def handle_status(chat_id):
     show_content(chat_id, text)
 
 def handle_check_now(chat_id):
+    log(f"handle_check_now for {chat_id}")
     # Show loading
     show_content(chat_id, "🔍 <b>Checking next 3 months...</b>\n\n⏳ Please wait...")
     
@@ -382,6 +425,7 @@ I'll notify you automatically when something opens up!"""
     show_content(chat_id, text)
 
 def handle_haircut_advice(chat_id):
+    log(f"handle_haircut_advice for {chat_id}")
     advice = random.choice(HAIRCUT_ADVICE)
     text = f"""✂️ <b>Haircut Wisdom</b>
 
@@ -389,11 +433,13 @@ def handle_haircut_advice(chat_id):
     show_content(chat_id, text)
 
 def handle_stop(chat_id):
+    log(f"handle_stop for {chat_id}")
     active_chat_ids.discard(chat_id)
     save_users()
     show_unsubscribed(chat_id)
 
 def handle_resubscribe(chat_id):
+    log(f"handle_resubscribe for {chat_id}")
     active_chat_ids.add(chat_id)
     save_users()
     text = """🔔 <b>Re-subscribed!</b>
@@ -417,7 +463,7 @@ def set_service_session(service_id):
         response = session.post(url, data=payload, headers=headers, timeout=10)
         return response.status_code == 200
     except Exception as e:
-        print(f"Error setting service: {e}")
+        log(f"Error setting service: {e}")
         return False
 
 def parse_time_to_minutes(time_str):
@@ -444,7 +490,7 @@ def get_specific_times(date_str):
         unique = sorted(list(set(normalised)), key=parse_time_to_minutes)
         return unique[0] if unique else None
     except Exception as e:
-        print(f"Error getting times: {e}")
+        log(f"Error getting times: {e}")
         return None
 
 def check_service_month(year, month):
@@ -460,7 +506,7 @@ def check_service_month(year, month):
                     found.append(item["day"])
         return found
     except Exception as e:
-        print(f"Error checking month: {e}")
+        log(f"Error checking month: {e}")
         return []
 
 def do_slot_check(full_check=False):
@@ -494,11 +540,11 @@ def do_slot_check(full_check=False):
         months_to_check.append((next_year, next_month))
     
     for service_name, service_id in SERVICES_TO_CHECK.items():
-        print(f"Checking {service_name}...")
+        log(f"Checking {service_name}...")
         session.cookies.clear()
         
         if not set_service_session(service_id):
-            print(f"Failed to set session for {service_name}")
+            log(f"Failed to set session for {service_name}")
             continue
 
         for year, month in months_to_check:
@@ -546,20 +592,20 @@ def broadcast_slots(message):
 
 # --- BACKGROUND CHECK LOOP ---
 def automated_check_loop():
-    print("Starting automated check loop...")
+    log("Starting automated check loop...")
     last_slots_found = False
     
     while True:
         try:
-            print(f"\n--- Auto Check at {get_melbourne_time().strftime('%I:%M %p')} ---")
+            log(f"--- Auto Check at {get_melbourne_time().strftime('%I:%M %p')} ---")
             found_any, results = do_slot_check(full_check=False)
             
             if found_any and not last_slots_found:
-                print("NEW SLOTS! Notifying...")
+                log("NEW SLOTS! Notifying...")
                 broadcast_slots(format_results_simple(results))
                 last_slots_found = True
             elif not found_any:
-                print("No slots")
+                log("No slots")
                 last_slots_found = False
             
             # Daily report at 7 PM
@@ -574,13 +620,13 @@ def automated_check_loop():
             
             save_users()
         except Exception as e:
-            print(f"Error in check loop: {e}")
+            log(f"Error in check loop: {e}")
         
         time.sleep(CHECK_INTERVAL)
 
 # --- MAIN BOT LOOP ---
 def handle_telegram_updates():
-    print("Starting Telegram bot...")
+    log("Starting Telegram bot...")
     load_users()
     
     # Notify existing users about restart
@@ -604,14 +650,14 @@ def handle_telegram_updates():
             response = tg_session.get(url, params=params, timeout=40)
             
             if response.status_code != 200:
-                print(f"HTTP error: {response.status_code}")
+                log(f"HTTP error: {response.status_code}")
                 errors += 1
                 time.sleep(5)
                 continue
             
             data = response.json()
             if not data.get('ok'):
-                print(f"API error: {data}")
+                log(f"API error: {data}")
                 errors += 1
                 time.sleep(5)
                 continue
@@ -629,19 +675,22 @@ def handle_telegram_updates():
                 msg_id = msg['message_id']
                 text = msg.get('text', '').strip()
                 
+                log(f"=== Received from {chat_id}: '{text}' ===")
+                log(f"    Auth status: {chat_id in authenticated_users}, Active: {chat_id in active_chat_ids}")
+                
                 # Delete user message to keep chat clean
-                Thread(target=lambda: (time.sleep(0.2), delete_message(chat_id, msg_id)), daemon=True).start()
+                Thread(target=lambda cid=chat_id, mid=msg_id: (time.sleep(0.2), delete_message(cid, mid)), daemon=True).start()
                 
                 # === NOT AUTHENTICATED ===
                 if chat_id not in authenticated_users:
+                    log(f"User {chat_id} not authenticated")
                     if text == BOT_PASSWORD:
-                        # Correct password!
+                        log(f"Correct password from {chat_id}")
                         authenticated_users.add(chat_id)
                         active_chat_ids.add(chat_id)
                         save_users()
                         show_welcome(chat_id)
                     else:
-                        # Wrong password or /start
                         if text.lower() == '/start':
                             show_auth_prompt(chat_id)
                         else:
@@ -649,55 +698,68 @@ def handle_telegram_updates():
                     continue
                 
                 # === AUTHENTICATED ===
+                log(f"User {chat_id} IS authenticated, processing command")
                 
                 # Rate limit check
                 if not check_rate_limit(chat_id):
+                    log(f"User {chat_id} rate limited")
                     show_content(chat_id, "⚠️ <b>Rate Limited</b>\n\nPlease wait a moment...")
                     continue
                 
                 # If unsubscribed, re-subscribe on any message
                 if chat_id not in active_chat_ids:
+                    log(f"User {chat_id} not active, resubscribing")
                     handle_resubscribe(chat_id)
                     continue
                 
                 # Handle menu buttons
+                log(f"Matching button text: '{text}'")
                 if text == "📊 Status":
+                    log(f"-> Status command")
                     handle_status(chat_id)
                 elif text == "🔍 Check Now":
+                    log(f"-> Check Now command")
                     handle_check_now(chat_id)
                 elif text == "✂️ Haircut Advice":
+                    log(f"-> Haircut Advice command")
                     handle_haircut_advice(chat_id)
                 elif text == "🔕 Stop Notifications":
+                    log(f"-> Stop command")
                     handle_stop(chat_id)
                 elif text.lower() == '/start':
+                    log(f"-> /start command (authenticated)")
                     handle_status(chat_id)
                 else:
-                    # Unknown input - show status
+                    log(f"-> Unknown command, showing status")
                     handle_status(chat_id)
         
         except requests.exceptions.Timeout:
+            log("Timeout")
             errors += 1
             time.sleep(2)
         except requests.exceptions.ConnectionError:
+            log("Connection error")
             errors += 1
             tg_session = requests.Session()
             time.sleep(5)
         except Exception as e:
-            print(f"Error: {e}")
+            log(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
             errors += 1
             time.sleep(5)
         
         if errors >= 5:
-            print("Too many errors, resetting...")
+            log("Too many errors, resetting...")
             tg_session = requests.Session()
             time.sleep(30)
             errors = 0
 
 # --- MAIN ---
 if __name__ == "__main__":
-    print("=" * 50)
-    print("Hair Appointment Bot")
-    print("=" * 50)
+    print("=" * 50, flush=True)
+    print("Hair Appointment Bot", flush=True)
+    print("=" * 50, flush=True)
     
     # Start Flask
     Thread(target=run_http_server, daemon=False).start()
