@@ -36,9 +36,60 @@ def send_notification(message):
         try:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
             payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
-            requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=10)
+            return response.status_code == 200
         except Exception as e:
             print(f"Msg fail: {e}")
+            return False
+
+def check_for_commands():
+    """Check if user sent a command via Telegram and respond."""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        
+        if not data.get('ok'):
+            return False
+        
+        updates = data.get('result', [])
+        if not updates:
+            return False
+        
+        # Get the latest message
+        latest_update = updates[-1]
+        message = latest_update.get('message', {})
+        text = message.get('text', '').strip().lower()
+        chat_id = message.get('chat', {}).get('id')
+        
+        # Only respond to authorized users
+        if str(chat_id) not in RECIPIENT_IDS:
+            return False
+        
+        # Handle commands
+        if text in ['/status', 'status', '/check', 'check']:
+            status_msg = f"✅ <b>Bot Status</b>\n\n"
+            status_msg += f"🤖 Bot is running normally\n"
+            status_msg += f"🕐 Last check: {datetime.datetime.now().strftime('%d %B %Y at %I:%M %p')}\n"
+            status_msg += f"📅 Checking next 30 days\n\n"
+            status_msg += f"<i>Automated checks run every 10 minutes</i>"
+            
+            send_notification(status_msg)
+            
+            # Mark message as read by updating offset
+            update_id = latest_update.get('update_id')
+            requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={update_id + 1}", timeout=5)
+            
+            return True
+        
+        elif text in ['/checknow', 'check now', 'now']:
+            send_notification("🔍 <b>Manual Check Started</b>\n\nChecking for available slots...")
+            return 'run_check'
+        
+    except Exception as e:
+        print(f"Command check error: {e}")
+    
+    return False
 
 def set_service_session(service_id):
     """
@@ -144,7 +195,7 @@ def check_service_month(year, month):
 def is_status_check():
     """
     Determine if this is a status check run (daily at 7 PM).
-    We check if the current hour is 19 (7 PM) in Melbourne time.
+    We check if the current hour is 19 (7 PM).
     """
     # Get environment variable to force status check (for testing)
     force_status = os.environ.get('FORCE_STATUS_CHECK', 'false').lower() == 'true'
@@ -152,13 +203,21 @@ def is_status_check():
     if force_status:
         return True
     
-    # Check if it's 7 PM in Melbourne (UTC+11 normally, but check system time)
+    # Check if it's 7 PM
     now = datetime.datetime.now()
     return now.hour == 19
 
 def run_checks():
     """Main function to check availability for all services."""
     print("--- Starting Session Check ---")
+    
+    # First, check for any commands
+    command_result = check_for_commands()
+    if command_result == True:
+        print("Status command received and responded to")
+        return
+    # If command_result is 'run_check', continue with the check
+    
     today = datetime.date.today()
     cutoff_date = today + datetime.timedelta(days=30)
     
