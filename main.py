@@ -77,11 +77,27 @@ def get_specific_times(date_str):
 
     try:
         response = session.get(url, params=params, timeout=10)
+        
+        # DEBUG: Print raw response
+        print(f"\n=== DEBUG for {date_str} ===")
+        print(f"Response length: {len(response.text)} characters")
+        
         times = re.findall(r'\d{1,2}:\d{2}\s*(?:am|pm)', response.text, re.IGNORECASE)
+        
+        # DEBUG: Show all found times before deduplication
+        print(f"All times found (total {len(times)}): {times}")
         
         # Normalise times: remove spaces and convert to uppercase for consistent deduplication
         normalised_times = [t.replace(" ", "").upper() for t in times]
+        
+        # DEBUG: Show normalised times
+        print(f"Normalised times: {normalised_times}")
+        
         unique_times = sorted(list(set(normalised_times)))
+        
+        # DEBUG: Show unique times
+        print(f"Unique times after dedup: {unique_times}")
+        print("=== END DEBUG ===\n")
         
         if unique_times:
             return ", ".join(unique_times)
