@@ -20,6 +20,16 @@ SERVICES_TO_CHECK = {
     "🦁 Curly hair (1.5 hours)": "1802702:SV"
 }
 
+# --- NEW: SESSION SETUP ---
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Origin": "https://book.gettimely.com",
+    "Referer": f"https://book.gettimely.com/Booking/Service?obg={BUSINESS_ID}",
+    "X-Requested-With": "XMLHttpRequest"
+})
+
 def send_notification(message):
     for chat_id in RECIPIENT_IDS:
         try:
@@ -29,25 +39,41 @@ def send_notification(message):
         except Exception as e:
             print(f"Msg fail: {e}")
 
-# --- NEW: SESSION SETUP ---
-# We use a session to persist cookies and headers, making the bot look like a real browser user.
-session = requests.Session()
-session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "*/*",
-    "Referer": "https://bookings.gettimely.com/hairbytaras/book",
-    "Origin": "https://bookings.gettimely.com",
-    "X-Requested-With": "XMLHttpRequest"
-})
+def set_service_session(service_id):
+    """
+    Sends the POST request to 'lock' the specific service into the session.
+    This is the 'Magic Switch' required before checking dates.
+    """
+    url = f"https://book.gettimely.com/Booking/Service?obg={BUSINESS_ID}"
+    
+    # We map the specific service ID to the Staff ID (Taras)
+    # This mimics the form submission exactly.
+    payload = {
+        "OnlineBookingMultiServiceEnabled": "True",
+        "LocationId": "0",
+        f"ServiceStaffIds[{service_id}]": STAFF_ID,
+        "BookableTimeSlotItemIds": service_id
+    }
+    
+    # Verify Content-Type is correct for a form submission
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
 
-def get_specific_times(date_str, service_id):
+    try:
+        response = session.post(url, data=payload, headers=headers, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Error setting service {service_id}: {e}")
+        return False
+
+def get_specific_times(date_str):
     url = "https://book.gettimely.com/booking/gettimeslots"
+    # Note: We removed 'BookableTimeSlotItemIds' here because the session (POST) now handles it.
     params = {
         "obg": BUSINESS_ID,
         "dateSelected": date_str,
-        "staffId": STAFF_ID,
-        # Using the exact parameter name from your HTML
-        "BookableTimeSlotItemIds": service_id,
+        "staffId": "-1",  # "Any staff" (but we locked Taras in the POST)
         "tzId": "57"
     }
 
@@ -64,14 +90,14 @@ def get_specific_times(date_str, service_id):
         print(f"Error times {date_str}: {e}")
         return "Time unknown"
 
-def check_service_month(year, month, service_id):
+def check_service_month(year, month):
     url = "https://book.gettimely.com/Booking/GetOpenDates"
+    # Note: Removed 'BookableTimeSlotItemIds' here as well.
     params = {
         "obg": BUSINESS_ID,
         "month": month,
         "year": year,
-        "staffId": STAFF_ID,
-        "BookableTimeSlotItemIds": service_id,
+        "staffId": "-1",
         "tzId": "57"
     }
 
@@ -99,8 +125,13 @@ def run_checks():
     for service_name, service_id in SERVICES_TO_CHECK.items():
         print(f"\n🔎 Checking {service_name}...")
         
-        # CLEAR COOKIES between services to ensure no "cross-contamination" of service IDs
+        # 1. Clear cookies to start fresh for this service
         session.cookies.clear()
+        
+        # 2. PERFORM THE MAGIC SWITCH (POST Request)
+        if not set_service_session(service_id):
+            print(f"   ⚠️ Failed to set session for {service_name}. Skipping...")
+            continue
 
         # Check Today + Next 2 Months (Total 3)
         for i in range(3): 
@@ -113,11 +144,12 @@ def run_checks():
             dummy_date = datetime.date(target_year, target_month, 1)
             month_name = dummy_date.strftime("%B")
 
-            # SKIP APRIL
+            # SKIP APRIL (As per your request)
             if month_name == "April":
                 continue
 
-            dates = check_service_month(target_year, target_month, service_id)
+            # 3. Check dates (Now uses the session established in step 2)
+            dates = check_service_month(target_year, target_month)
             
             if dates:
                 print(f"   Found {len(dates)} days in {month_name}")
@@ -128,7 +160,7 @@ def run_checks():
                     if d_obj.month == 4:
                         continue
 
-                    time_str = get_specific_times(d_str, service_id)
+                    time_str = get_specific_times(d_str)
                     
                     if time_str == "No fitting slots":
                         continue
