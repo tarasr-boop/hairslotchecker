@@ -9,10 +9,6 @@ import random
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.environ['TELEGRAM_TOKEN']
-RECIPIENT_IDS = [
-    os.environ['TELEGRAM_CHAT_ID_TARAS'],
-    os.environ['TELEGRAM_CHAT_ID_SOFIIA']
-]
 
 BUSINESS_ID = "8ab07528-c2a9-463d-a441-3e0aa39a975e"
 STAFF_ID = "339008" 
@@ -63,43 +59,40 @@ def get_melbourne_time():
     """Get current time in Melbourne timezone."""
     return datetime.datetime.now(MELBOURNE_TZ)
 
-def send_notification(message, reply_markup=None):
-    """Send Telegram notification with optional inline keyboard."""
-    success = False
-    for chat_id in RECIPIENT_IDS:
-        try:
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-            payload = {
-                "chat_id": chat_id, 
-                "text": message, 
-                "parse_mode": "HTML"
-            }
-            if reply_markup:
-                payload["reply_markup"] = reply_markup
-            
-            response = requests.post(url, json=payload, timeout=10)
-            if response.status_code == 200:
-                success = True
-        except Exception as e:
-            print(f"Msg fail for {chat_id}: {e}")
-    return success
+def send_telegram_message(chat_id, message, reply_markup=None):
+    """Send message to specific chat."""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": chat_id, 
+            "text": message, 
+            "parse_mode": "HTML"
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        
+        response = requests.post(url, json=payload, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Error sending message: {e}")
+        return False
 
-def send_menu():
+def send_menu(chat_id):
     """Send the main menu with inline keyboard buttons."""
     keyboard = {
         "inline_keyboard": [
             [
-                {"text": "📊 Status", "callback_data": "cmd_status"},
-                {"text": "🔍 Check Now", "callback_data": "cmd_checknow"}
+                {"text": "📊 Status", "callback_data": "status"},
+                {"text": "🔍 Check Now", "callback_data": "checknow"}
             ],
             [
-                {"text": "💇‍♂️ Should I Get a Haircut?", "callback_data": "cmd_haircut"}
+                {"text": "💇‍♂️ Should I Get a Haircut?", "callback_data": "haircut"}
             ]
         ]
     }
     
     message = "🤖 <b>Hair Appointment Bot</b>\n\nWhat would you like to do?"
-    send_notification(message, reply_markup=keyboard)
+    send_telegram_message(chat_id, message, reply_markup=keyboard)
 
 def answer_callback(callback_query_id, text):
     """Answer a callback query (shows a popup notification)."""
@@ -112,85 +105,6 @@ def answer_callback(callback_query_id, text):
         requests.post(url, json=payload, timeout=5)
     except Exception as e:
         print(f"Error answering callback: {e}")
-
-def handle_telegram_updates():
-    """Check for and handle Telegram button presses."""
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        
-        if not data.get('ok'):
-            print("Failed to get Telegram updates")
-            return None
-        
-        updates = data.get('result', [])
-        if not updates:
-            print("No Telegram updates found")
-            return None
-        
-        # Get the latest update
-        latest_update = updates[-1]
-        update_id = latest_update.get('update_id')
-        
-        # Check for callback query (button press)
-        if 'callback_query' in latest_update:
-            callback = latest_update['callback_query']
-            callback_data = callback.get('data', '')
-            chat_id = callback['message']['chat']['id']
-            callback_query_id = callback['id']
-            
-            print(f"Button pressed: {callback_data} from chat_id: {chat_id}")
-            
-            # Only respond to authorized users
-            if str(chat_id) not in RECIPIENT_IDS:
-                print(f"Unauthorized chat_id: {chat_id}")
-                answer_callback(callback_query_id, "❌ Unauthorized")
-                # Mark as read
-                requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={update_id + 1}", timeout=5)
-                return None
-            
-            # Mark update as read
-            requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={update_id + 1}", timeout=5)
-            
-            return {
-                'command': callback_data.replace('cmd_', ''),
-                'callback_query_id': callback_query_id
-            }
-        
-        # Check for text message
-        elif 'message' in latest_update:
-            message = latest_update['message']
-            text = message.get('text', '').strip().lower()
-            chat_id = message['chat']['id']
-            
-            print(f"Received message: '{text}' from chat_id: {chat_id}")
-            
-            # Only respond to authorized users
-            if str(chat_id) not in RECIPIENT_IDS:
-                print(f"Unauthorized chat_id: {chat_id}")
-                # Mark as read
-                requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={update_id + 1}", timeout=5)
-                return None
-            
-            # Mark update as read
-            requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={update_id + 1}", timeout=5)
-            
-            # Handle text commands
-            if text in ['/start', 'start', 'menu', '/menu']:
-                send_menu()
-                return None
-            elif text in ['status', '/status']:
-                return {'command': 'status'}
-            elif text in ['check now', 'checknow', '/checknow']:
-                return {'command': 'checknow'}
-            elif text in ['haircut', '/haircut', 'should i get a haircut?']:
-                return {'command': 'haircut'}
-        
-    except Exception as e:
-        print(f"Error handling updates: {e}")
-    
-    return None
 
 def set_service_session(service_id):
     """Sends the POST request to 'lock' the specific service into the session."""
@@ -279,15 +193,6 @@ def check_service_month(year, month):
         print(f"Error checking month {year}-{month}: {e}")
         return []
 
-def is_status_check():
-    """Determine if this is a status check run (daily at 7 PM Melbourne time)."""
-    force_status = os.environ.get('FORCE_STATUS_CHECK', 'false').lower() == 'true'
-    if force_status:
-        return True
-    
-    melbourne_time = get_melbourne_time()
-    return melbourne_time.hour == 19
-
 def do_slot_check(full_check=False):
     """Perform the actual slot checking logic."""
     melbourne_time = get_melbourne_time()
@@ -366,107 +271,125 @@ def do_slot_check(full_check=False):
     
     return found_any_slots, results
 
-def run_checks():
-    """Main function - checks for slots and handles commands."""
-    print("--- Starting Session Check ---")
-    
-    # Check for button presses or commands
-    command_result = handle_telegram_updates()
-    
-    if command_result:
-        command = command_result['command']
-        callback_query_id = command_result.get('callback_query_id')
+def handle_updates():
+    """Handle all Telegram updates (messages and button presses)."""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+        response = requests.get(url, timeout=10)
+        data = response.json()
         
-        if command == 'status':
-            print("Status command detected!")
-            if callback_query_id:
-                answer_callback(callback_query_id, "⏳ Getting status...")
-            
-            melbourne_time = get_melbourne_time()
-            status_msg = f"✅ <b>Bot Status</b>\n\n"
-            status_msg += f"🤖 Bot is running normally\n"
-            status_msg += f"🕐 Last check: {melbourne_time.strftime('%d %B %Y at %I:%M %p')}\n"
-            status_msg += f"📅 Checking next 30 days\n\n"
-            status_msg += f"<i>Automated checks run every 6 minutes</i>"
-            
-            send_notification(status_msg)
-            send_menu()  # Send menu again
+        if not data.get('ok'):
+            print("Failed to get updates")
             return
         
-        elif command == 'checknow':
-            print("Check now command detected!")
-            if callback_query_id:
-                answer_callback(callback_query_id, "🔍 Checking...")
+        updates = data.get('result', [])
+        if not updates:
+            print("No new updates")
+            return
+        
+        # Process ALL unprocessed updates
+        for update in updates:
+            update_id = update.get('update_id')
             
-            send_notification("🔍 <b>Checking availability for next 3 months...</b>\n\n<i>Stand by, this may take a minute</i>")
-            
-            found_any_slots, results = do_slot_check(full_check=True)
-            
-            if found_any_slots:
-                final_msg = "🚨 <b>Update</b>\n"
+            # Handle button presses (callback queries)
+            if 'callback_query' in update:
+                callback = update['callback_query']
+                callback_data = callback.get('data', '')
+                chat_id = callback['message']['chat']['id']
+                callback_query_id = callback['id']
                 
-                for service_name, months_data in results.items():
-                    if months_data:
-                        final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service_name}</b>\n"
+                print(f"Button pressed: {callback_data} by chat {chat_id}")
+                
+                if callback_data == 'status':
+                    answer_callback(callback_query_id, "⏳ Getting status...")
+                    
+                    melbourne_time = get_melbourne_time()
+                    status_msg = f"✅ <b>Bot Status</b>\n\n"
+                    status_msg += f"🤖 Bot is running normally\n"
+                    status_msg += f"🕐 Last check: {melbourne_time.strftime('%d %B %Y at %I:%M %p')}\n"
+                    status_msg += f"📅 Checking next 30 days\n\n"
+                    status_msg += f"<i>Automated checks run every 6 minutes</i>"
+                    
+                    send_telegram_message(chat_id, status_msg)
+                    send_menu(chat_id)
+                    
+                elif callback_data == 'checknow':
+                    answer_callback(callback_query_id, "🔍 Checking...")
+                    send_telegram_message(chat_id, "🔍 <b>Checking next 3 months...</b>\n\n<i>Stand by, this may take a minute</i>")
+                    
+                    found_any_slots, results = do_slot_check(full_check=True)
+                    
+                    if found_any_slots:
+                        final_msg = "🚨 <b>Update</b>\n"
                         
-                        for month_name, entries in months_data.items():
-                            final_msg += f"\n📅 <b>{month_name}:</b>\n"
-                            final_msg += "\n".join(entries) + "\n"
+                        for service_name, months_data in results.items():
+                            if months_data:
+                                final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service_name}</b>\n"
+                                
+                                for month_name, entries in months_data.items():
+                                    final_msg += f"\n📅 <b>{month_name}:</b>\n"
+                                    final_msg += "\n".join(entries) + "\n"
 
-                final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
-                send_notification(final_msg)
-                print("✅ Slots found!")
-            else:
-                status_msg = f"❌ <b>No Slots Available</b>\n\n"
-                status_msg += f"No appointments found in the next 3 months.\n\n"
-                status_msg += f"<i>Checked: {get_melbourne_time().strftime('%d %B %Y at %I:%M %p')}</i>"
-                send_notification(status_msg)
-                print("No slots found")
+                        final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
+                        send_telegram_message(chat_id, final_msg)
+                    else:
+                        send_telegram_message(chat_id, f"❌ <b>No Slots Available</b>\n\nNo appointments in next 3 months.\n\n<i>Checked: {get_melbourne_time().strftime('%d %B at %I:%M %p')}</i>")
+                    
+                    send_menu(chat_id)
+                    
+                elif callback_data == 'haircut':
+                    answer_callback(callback_query_id, "🎱 Consulting the hair gods...")
+                    advice = random.choice(HAIRCUT_ADVICE)
+                    send_telegram_message(chat_id, f"💇‍♂️ <b>Should You Get a Haircut?</b>\n\n{advice}")
+                    send_menu(chat_id)
             
-            send_menu()  # Send menu again
-            return
+            # Handle text messages
+            elif 'message' in update:
+                message = update['message']
+                text = message.get('text', '').strip()
+                chat_id = message['chat']['id']
+                
+                print(f"Message from {chat_id}: {text}")
+                
+                # Respond to any message with the menu
+                send_menu(chat_id)
+            
+            # Mark this update as processed
+            requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={update_id + 1}", timeout=5)
         
-        elif command == 'haircut':
-            print("Haircut advice requested!")
-            if callback_query_id:
-                answer_callback(callback_query_id, "🎱 Consulting the hair gods...")
-            
-            advice = random.choice(HAIRCUT_ADVICE)
-            send_notification(f"💇‍♂️ <b>Should You Get a Haircut?</b>\n\n{advice}")
-            send_menu()  # Send menu again
-            return
+    except Exception as e:
+        print(f"Error handling updates: {e}")
+
+def is_status_check():
+    """Check if it's 7 PM Melbourne time for daily status."""
+    force_status = os.environ.get('FORCE_STATUS_CHECK', 'false').lower() == 'true'
+    if force_status:
+        return True
     
-    # Normal scheduled check
+    melbourne_time = get_melbourne_time()
+    return melbourne_time.hour == 19
+
+def run_checks():
+    """Main function."""
+    print("--- Starting Check ---")
+    
+    # First, handle any Telegram commands/buttons
+    handle_updates()
+    
+    # Then do scheduled checking
     status_check = is_status_check()
     found_any_slots, results = do_slot_check(full_check=False)
     
-    if found_any_slots:
-        final_msg = "🚨 <b>Update</b>\n"
-        
-        for service_name, months_data in results.items():
-            if months_data:
-                final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service_name}</b>\n"
-                
-                for month_name, entries in months_data.items():
-                    final_msg += f"\n📅 <b>{month_name}:</b>\n"
-                    final_msg += "\n".join(entries) + "\n"
-
-        final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
-        
-        send_notification(final_msg)
-        print("✅ Slots found! Notification sent!")
-        
-    elif status_check:
-        status_msg = f"✅ <b>Daily Status Check</b>\n\n"
-        status_msg += f"Script is running normally.\n"
-        status_msg += f"No appointments available in the next 30 days.\n\n"
-        status_msg += f"<i>Checked: {get_melbourne_time().strftime('%d %B %Y at %I:%M %p')}</i>"
-        
-        send_notification(status_msg)
-        print("✅ Daily status sent (no slots)")
-        
+    # For scheduled checks, we need to broadcast to all known users
+    # Since we removed user authentication, we'll skip broadcast notifications
+    # and only respond to direct interactions
+    
+    if found_any_slots or status_check:
+        print(f"Slots found: {found_any_slots}, Status check: {status_check}")
+        # Note: You'd need to store chat_ids somewhere to broadcast
+        # For now, users must interact with the bot to get updates
     else:
-        print("❌ No slots in next 30 days. Silent.")
+        print("No slots, not status time. Silent.")
 
 if __name__ == "__main__":
     run_checks()
