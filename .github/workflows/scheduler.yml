@@ -2,8 +2,10 @@ name: Check Slots
 
 on:
   schedule:
-    # Runs every 6 minutes (GitHub Actions can delay 5-min schedules)
-    - cron: '*/6 * * * *'
+    # Every 10 minutes - regular slot checking
+    - cron: '*/10 * * * *'
+    # Every day at 7 PM Melbourne time (9 AM UTC, since Melbourne is UTC+11)
+    - cron: '0 9 * * *'
   workflow_dispatch: # Allows manual trigger
   push:
     branches:
@@ -29,4 +31,6 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID_TARAS: ${{ secrets.TELEGRAM_CHAT_ID_TARAS }}
           TELEGRAM_CHAT_ID_SOFIIA: ${{ secrets.TELEGRAM_CHAT_ID_SOFIIA }}
+          # This will be 'true' only for the 9 AM UTC run (7 PM Melbourne)
+          FORCE_STATUS_CHECK: ${{ github.event.schedule == '0 9 * * *' && 'true' || 'false' }}
         run: python main.py
