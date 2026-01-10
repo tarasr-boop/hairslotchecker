@@ -40,86 +40,17 @@ def get_melbourne_time():
 
 def send_notification(message):
     """Send Telegram notification to all recipients."""
+    success = False
     for chat_id in RECIPIENT_IDS:
         try:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
             payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
             response = requests.post(url, json=payload, timeout=10)
-            return response.status_code == 200
+            if response.status_code == 200:
+                success = True
         except Exception as e:
-            print(f"Msg fail: {e}")
-            return False
-
-def check_for_commands():
-    """Check if user sent a command via Telegram and respond."""
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        
-        if not data.get('ok'):
-            print("Failed to get Telegram updates")
-            return False
-        
-        updates = data.get('result', [])
-        if not updates:
-            print("No Telegram updates found")
-            return False
-        
-        # Get the latest message
-        latest_update = updates[-1]
-        message = latest_update.get('message', {})
-        text = message.get('text', '').strip().lower()
-        chat_id = message.get('chat', {}).get('id')
-        
-        print(f"Received message: '{text}' from chat_id: {chat_id}")
-        
-        # Only respond to authorized users
-        if str(chat_id) not in RECIPIENT_IDS:
-            print(f"Unauthorized chat_id: {chat_id}")
-            return False
-        
-        # Handle commands
-        if text in ['/status', 'status', '/check', 'check']:
-            print("Status command detected!")
-            # Send immediate acknowledgement
-            ack_msg = "⏳ <b>Obtaining status...</b>"
-            send_notification(ack_msg)
-            time.sleep(1)
-            
-            melbourne_time = get_melbourne_time()
-            status_msg = f"✅ <b>Bot Status</b>\n\n"
-            status_msg += f"🤖 Bot is running normally\n"
-            status_msg += f"🕐 Last check: {melbourne_time.strftime('%d %B %Y at %I:%M %p')}\n"
-            status_msg += f"📅 Checking next 30 days\n\n"
-            status_msg += f"<i>Automated checks run every 6 minutes</i>"
-            
-            send_notification(status_msg)
-            
-            # Mark message as read by updating offset
-            update_id = latest_update.get('update_id')
-            requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={update_id + 1}", timeout=5)
-            
-            return True
-        
-        elif text in ['/checknow', 'check now', 'now']:
-            print("Check now command detected!")
-            # Send immediate acknowledgement
-            ack_msg = "🔍 <b>Checking availability for next 3 months...</b>\n\n<i>Stand by, this may take a minute</i>"
-            send_notification(ack_msg)
-            
-            # Mark message as read
-            update_id = latest_update.get('update_id')
-            requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={update_id + 1}", timeout=5)
-            
-            return 'run_full_check'
-        
-        print(f"Message '{text}' not recognized as a command")
-        
-    except Exception as e:
-        print(f"Command check error: {e}")
-    
-    return False
+            print(f"Msg fail for {chat_id}: {e}")
+    return success
 
 def set_service_session(service_id):
     """
@@ -236,33 +167,21 @@ def is_status_check():
     melbourne_time = get_melbourne_time()
     return melbourne_time.hour == 19
 
-def run_checks(full_check=False):
-    """Main function to check availability for all services.
+def do_slot_check(full_check=False):
+    """Perform the actual slot checking logic.
     
     Args:
         full_check: If True, checks current month + next 2 months. 
                    If False, checks next 30 days only.
+                   
+    Returns:
+        tuple: (found_any_slots, results_dict)
     """
-    print("--- Starting Session Check ---")
-    
-    # First, check for any commands (only if not already in full check mode)
-    if not full_check:
-        command_result = check_for_commands()
-        if command_result == True:
-            print("Status command received and responded to")
-            return
-        elif command_result == 'run_full_check':
-            print("Full check requested via command")
-            full_check = True
-    
     melbourne_time = get_melbourne_time()
     today = melbourne_time.date()
     
-    status_check = is_status_check()
-    
     print(f"Today (Melbourne): {today}")
     print(f"Full check mode: {full_check}")
-    print(f"Status check mode: {status_check}")
     
     results = defaultdict(lambda: defaultdict(list))
     found_any_slots = False
@@ -340,8 +259,17 @@ def run_checks(full_check=False):
                     time.sleep(0.5)
         
         time.sleep(1)
+    
+    return found_any_slots, results
 
-    # Send notification based on findings and whether it's a status check
+def run_checks():
+    """Main function - checks for slots in next 30 days."""
+    print("--- Starting Scheduled Check ---")
+    
+    status_check = is_status_check()
+    found_any_slots, results = do_slot_check(full_check=False)
+    
+    # Send notification based on findings
     if found_any_slots:
         # --- SLOTS FOUND MESSAGE ---
         final_msg = "🚨 <b>Update</b>\n"
@@ -359,24 +287,61 @@ def run_checks(full_check=False):
         send_notification(final_msg)
         print("✅ Slots found! Notification sent!")
         
-    elif status_check or full_check:
-        # --- DAILY STATUS MESSAGE (no slots found) or manual check with no results ---
-        if full_check:
-            status_msg = f"❌ <b>No Slots Available</b>\n\n"
-            status_msg += f"No appointments found in the next 3 months.\n\n"
-        else:
-            status_msg = f"✅ <b>Daily Status Check</b>\n\n"
-            status_msg += f"Script is running normally.\n"
-            status_msg += f"No appointments available in the next 30 days.\n\n"
-        
+    elif status_check:
+        # --- DAILY STATUS MESSAGE (no slots found) ---
+        status_msg = f"✅ <b>Daily Status Check</b>\n\n"
+        status_msg += f"Script is running normally.\n"
+        status_msg += f"No appointments available in the next 30 days.\n\n"
         status_msg += f"<i>Checked: {get_melbourne_time().strftime('%d %B %Y at %I:%M %p')}</i>"
         
         send_notification(status_msg)
-        print(f"✅ Status notification sent ({'manual check' if full_check else 'daily status'})")
+        print("✅ Daily status sent (no slots)")
         
     else:
         # Regular check with no slots - stay silent
-        print("❌ No slots available in next 30 days. No notification sent (not status check time).")
+        print("❌ No slots in next 30 days. Silent.")
 
 if __name__ == "__main__":
-    run_checks()
+    # Check if this is being run as a command (via environment variable)
+    command = os.environ.get('BOT_COMMAND', '').lower()
+    
+    if command == 'status':
+        print("--- Status Command ---")
+        melbourne_time = get_melbourne_time()
+        status_msg = f"✅ <b>Bot Status</b>\n\n"
+        status_msg += f"🤖 Bot is running normally\n"
+        status_msg += f"🕐 Last check: {melbourne_time.strftime('%d %B %Y at %I:%M %p')}\n"
+        status_msg += f"📅 Checking next 30 days\n\n"
+        status_msg += f"<i>Automated checks run every 6 minutes</i>"
+        send_notification(status_msg)
+        print("Status sent!")
+        
+    elif command == 'checknow':
+        print("--- Check Now Command ---")
+        send_notification("🔍 <b>Checking availability for next 3 months...</b>\n\n<i>Stand by, this may take a minute</i>")
+        
+        found_any_slots, results = do_slot_check(full_check=True)
+        
+        if found_any_slots:
+            final_msg = "🚨 <b>Update</b>\n"
+            
+            for service_name, months_data in results.items():
+                if months_data:
+                    final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service_name}</b>\n"
+                    
+                    for month_name, entries in months_data.items():
+                        final_msg += f"\n📅 <b>{month_name}:</b>\n"
+                        final_msg += "\n".join(entries) + "\n"
+
+            final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
+            send_notification(final_msg)
+            print("✅ Slots found!")
+        else:
+            status_msg = f"❌ <b>No Slots Available</b>\n\n"
+            status_msg += f"No appointments found in the next 3 months.\n\n"
+            status_msg += f"<i>Checked: {get_melbourne_time().strftime('%d %B %Y at %I:%M %p')}</i>"
+            send_notification(status_msg)
+            print("No slots found")
+    else:
+        # Normal scheduled run
+        run_checks()
