@@ -52,7 +52,7 @@ def check_service_month(year, month, service_name, service_id):
         data = response.json()
         
         # DEBUG: Print exact response for troubleshooting
-        print(f"Checking {service_name} ({year}-{month}): {str(data)[:100]}...") 
+        print(f"Checking {service_name} ({year}-{month})...") 
 
         if isinstance(data, list): return data
         elif "startDates" in data: return data["startDates"]
@@ -83,4 +83,20 @@ def run_checks():
             
             if dates:
                 print(f"✅ FOUND: {len(dates)} slots in {target_month}/{target_year}")
-                found_messages.append(f"✅ {service_name} ({target
+                # THIS WAS THE BROKEN LINE BEFORE:
+                found_messages.append(f"✅ {service_name} ({target_month}/{target_year}):")
+                found_messages.append(f"   Dates: {', '.join(dates[:5])}")
+                if len(dates) > 5: found_messages.append("   ...and more!")
+                found_messages.append("") # Empty line for spacing
+        
+        time.sleep(1) # Be polite to their server
+
+    if found_messages:
+        final_msg = "🚨 HAIR BY TARAS UPDATES!\n\n" + "\n".join(found_messages)
+        final_msg += "\nBook here: https://bookings.gettimely.com/hairbytaras/book"
+        send_notification(final_msg)
+    else:
+        print("\nNo dates found for any service.")
+
+if __name__ == "__main__":
+    run_checks()
