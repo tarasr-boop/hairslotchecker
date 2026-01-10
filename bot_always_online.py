@@ -392,20 +392,29 @@ def edit_message_raw(chat_id, message_id, text, retry=2):
     
     return False
 
-# --- SINGLE MESSAGE MANAGEMENT ---
+# --- SINGLE MESSAGE MANAGEMENT (FIXED SECTION) ---
 def show_content(chat_id, text):
-    """Show content in the single content message."""
+    """Show content seamlessly by sending NEW before deleting OLD."""
     log(f"show_content called for {chat_id}")
     
-    if chat_id in chat_content_message:
-        if edit_message_raw(chat_id, chat_content_message[chat_id], text):
-            return
-        delete_message(chat_id, chat_content_message[chat_id])
-        del chat_content_message[chat_id]
-    
+    old_message_id = chat_content_message.get(chat_id)
+
+    # 1. Try to Edit existing message first (Most seamless)
+    if old_message_id:
+        if edit_message_raw(chat_id, old_message_id, text):
+            return  # Edit successful, nothing else to do
+
+    # 2. If Edit failed (or didn't exist), Send the NEW message FIRST
     msg_id = send_message_raw(chat_id, text, REPLY_KEYBOARD)
+
+    # 3. Update the tracker with the new ID
     if msg_id:
         chat_content_message[chat_id] = msg_id
+
+        # 4. Clean up the OLD message AFTER the new one is visible
+        if old_message_id:
+            # We use a thread so we don't block main loop waiting for delete
+            Thread(target=delete_message, args=(chat_id, old_message_id)).start()
 
 def show_auth_prompt(chat_id):
     """Show password prompt - NO keyboard."""
@@ -872,7 +881,7 @@ def handle_telegram_updates():
 # --- MAIN ---
 if __name__ == "__main__":
     print("=" * 50, flush=True)
-    print("Hair Appointment Bot - FIXED VERSION", flush=True)
+    print("Hair Appointment Bot - SEAMLESS VERSION", flush=True)
     print("=" * 50, flush=True)
     
     if not JSONBIN_API_KEY:
