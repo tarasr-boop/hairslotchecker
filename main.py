@@ -15,7 +15,7 @@ RECIPIENT_IDS = [
 BUSINESS_ID = "8ab07528-c2a9-463d-a441-3e0aa39a975e"
 STAFF_ID = "339008" 
 
-# Using the IDs with :SV exactly as in the HTML value attribute
+# These IDs include the :SV suffix which is CRITICAL for duration (1h vs 1.5h)
 SERVICES_TO_CHECK = {
     "💇‍♂️ Short hair (1 hour)": "1802687:SV", 
     "🦁 Curly hair (1.5 hours)": "1802702:SV"
@@ -32,16 +32,21 @@ def send_notification(message):
 
 def get_specific_times(date_str, service_id):
     """
-    Hits the endpoint using 'BookableTimeSlotItemIds' (Capital B) to match HTML.
-    This forces the server to calculate the specific duration (1h vs 1.5h).
+    Hits the specific endpoint to get hours for a single day.
+    We send the ID in multiple parameter slots to ensure the server respects the duration.
     """
     url = "https://book.gettimely.com/booking/gettimeslots"
     params = {
         "obg": BUSINESS_ID,
         "dateSelected": date_str,
         "staffId": STAFF_ID,      
-        # CRITICAL FIX: Capital 'B' to match the HTML Input Name exactly
-        "BookableTimeSlotItemIds": service_id, 
+        
+        # WE SEND BOTH PARAMETERS TO BE SAFE:
+        # 1. Standard API filter
+        "serviceIds": service_id, 
+        # 2. Form input name (just in case)
+        "BookableTimeSlotItemIds": service_id,
+        
         "tzId": "57"
     }
     
@@ -54,7 +59,7 @@ def get_specific_times(date_str, service_id):
     try:
         response = requests.get(url, params=params, headers=headers, timeout=10)
         
-        # Regex to find times
+        # Regex to find times like "11:00am", "11:00 am", "11:00 PM"
         times = re.findall(r'\d{1,2}:\d{2}\s*(?:am|pm)', response.text, re.IGNORECASE)
         unique_times = sorted(list(set(times)))
         
@@ -68,14 +73,20 @@ def get_specific_times(date_str, service_id):
         return "Time unknown"
 
 def check_service_month(year, month, service_id):
+    """
+    Checks which DAYS have availability.
+    """
     url = "https://book.gettimely.com/Booking/GetOpenDates"
     params = {
         "obg": BUSINESS_ID,
         "month": month,
         "year": year,
         "staffId": STAFF_ID,
-        # CRITICAL FIX: Capital 'B' here too
+        
+        # Send both variations here too to ensure the CALENDAR filters correctly
+        "serviceIds": service_id, 
         "BookableTimeSlotItemIds": service_id,
+        
         "tzId": "57"
     }
     headers = {
@@ -118,12 +129,11 @@ def run_checks():
                 target_month -= 12
                 target_year += 1
             
-            # Get Month Name for logic
+            # Get Month Name
             dummy_date = datetime.date(target_year, target_month, 1)
             month_name = dummy_date.strftime("%B")
 
             # --- STRICT APRIL BLOCK ---
-            # Don't even ask the server if it's April
             if month_name == "April":
                 continue
             # --------------------------
@@ -136,7 +146,7 @@ def run_checks():
                 for d_str in dates:
                     d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
 
-                    # Double Check: Ensure date is not in April (e.g. 1st April spilling into March view)
+                    # Double Check: Ensure date is not in April (spillover check)
                     if d_obj.month == 4:
                         continue
 
@@ -155,7 +165,8 @@ def run_checks():
                     
                     # Store data under the actual month of the slot
                     actual_month_name = d_obj.strftime("%B")
-                    if actual_month_name != "April": # Triple check
+                    
+                    if actual_month_name != "April": 
                         results[service_name][actual_month_name].append(entry)
                     
                     time.sleep(0.5)
