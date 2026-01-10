@@ -4,7 +4,6 @@ import datetime
 import time
 import re
 from collections import defaultdict
-from bs4 import BeautifulSoup
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.environ['TELEGRAM_TOKEN']
@@ -30,38 +29,38 @@ def send_notification(message):
         except Exception as e:
             print(f"Msg fail: {e}")
 
-def get_specific_times(date_str, service_id):
+def get_specific_times(date_str):
     """
     Hits the specific endpoint to get hours for a single day.
-    Returns a string like "11:00am, 2:30pm"
     """
     url = "https://book.gettimely.com/booking/gettimeslots"
     params = {
         "obg": BUSINESS_ID,
         "dateSelected": date_str,
-        "staffId": STAFF_ID,
-        "serviceIds": service_id, # We assume they need this to calc duration
+        "staffId": "-1",
         "tzId": "57"
     }
-    # Headers mimicking your browser
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
         "X-Requested-With": "XMLHttpRequest",
+        "Accept": "*/*"
     }
 
     try:
         response = requests.get(url, params=params, headers=headers, timeout=10)
         
-        # This endpoint returns HTML, not JSON. We use Regex to find times quickly.
-        # It looks for patterns like "11:00am" or "1:30pm"
-        times = re.findall(r'\d{1,2}:\d{2}(?:am|pm)', response.text)
+        # Regex to find times like "11:00am", "11:00 am", "11:00 PM"
+        # \s* allows for an optional space
+        times = re.findall(r'\d{1,2}:\d{2}\s*(?:am|pm)', response.text, re.IGNORECASE)
         
-        # Remove duplicates and sort
+        # Clean up (remove duplicates and sort)
         unique_times = sorted(list(set(times)))
         
         if unique_times:
             return ", ".join(unique_times)
-        return "Check link for times"
+        
+        return "Check link"
         
     except Exception as e:
         print(f"Error getting times for {date_str}: {e}")
@@ -101,7 +100,7 @@ def run_checks():
     print("--- Starting Check ---")
     today = datetime.date.today()
     
-    # Store results: results["Short Hair"]["February"] = ["18 Feb (11:00am)", ...]
+    # Structure: results["Short Hair"]["February"] = ["• 18 Feb: 11:00am"]
     results = defaultdict(lambda: defaultdict(list))
     has_found_any = False
 
@@ -114,31 +113,36 @@ def run_checks():
             if target_month > 12:
                 target_month -= 12
                 target_year += 1
+            
+            # Get the Month Name (e.g. "February") immediately
+            dummy_date = datetime.date(target_year, target_month, 1)
+            month_name = dummy_date.strftime("%B")
 
             dates = check_service_month(target_year, target_month, service_id)
             
             if dates:
                 has_found_any = True
-                print(f"   Found {len(dates)} days in {target_month}/{target_year}")
+                print(f"   Found {len(dates)} days in {month_name}")
                 
                 for d_str in dates:
-                    # 1. Get the specific times for this day
-                    time_str = get_specific_times(d_str, service_id)
+                    # 1. Get exact times
+                    time_str = get_specific_times(d_str)
                     
-                    # 2. Format the date
+                    # 2. Format nice date "18 Feb"
                     d_obj = datetime.datetime.strptime(d_str, "%Y-%m-%d")
-                    month_name = d_obj.strftime("%B")
                     nice_date = d_obj.strftime("%d %B")
                     
-                    # 3. Save it: "18 February: 11:00am, 2:00pm"
                     entry = f"• {nice_date}: {time_str}"
                     results[service_name][month_name].append(entry)
-                    
-                    # Sleep slightly to avoid spamming the "Time" endpoint
                     time.sleep(0.5)
+            else:
+                # Add explicit "Nothing" entry if no dates found
+                results[service_name][month_name].append("Nothing")
         
         time.sleep(1)
 
+    # Only send notification if AT LEAST ONE slot was found somewhere.
+    # Otherwise, you would get a "Nothing" message every 5 minutes forever.
     if has_found_any:
         final_msg = "🚨 <b>HAIR BY TARAS UPDATE</b>\n"
         
@@ -148,7 +152,7 @@ def run_checks():
             
             for month, entries in months_data.items():
                 final_msg += f"\n📅 <b>{month}:</b>\n"
-                # Add the list of days+times
+                # Join all entries (dates or "Nothing")
                 final_msg += "\n".join(entries) + "\n"
         
         final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
@@ -156,7 +160,7 @@ def run_checks():
         send_notification(final_msg)
         print("Notification sent!")
     else:
-        print("\nNo dates found.")
+        print("\nNo dates found (Silence).")
 
 if __name__ == "__main__":
     run_checks()
