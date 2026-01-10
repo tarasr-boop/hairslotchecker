@@ -27,32 +27,43 @@ MELBOURNE_TZ = pytz.timezone('Australia/Melbourne')
 # Check interval in seconds (2 minutes)
 CHECK_INTERVAL = 120
 
-# Store chat IDs of users who have interacted
+# Global variables
 active_chat_ids = set()
-last_notification_time = {}
+last_check_string = "Not checked yet" # Stores the string of the last check time
 
-# Funny haircut advice
+# Esoteric & Simple Haircut Advice
 HAIRCUT_ADVICE = [
-    "🚫 Absolutely not. Your hair is perfect. Don't you dare touch it.",
-    "✂️ YES! Book it NOW! Your hair has been plotting against you.",
-    "🤔 Ask again after you've had coffee. This is too big a decision.",
-    "💇 Your hair called. It said 'please no, we had a good run.'",
-    "🎲 Flip a coin. Heads = haircut, Tails = grow it to your ankles.",
-    "🧠 According to my calculations, you have exactly 3 days before critical hair failure.",
-    "🎭 Only if you're ready to commit to the post-haircut selfie.",
-    "⏰ It's been [REDACTED] days. The answer is always yes.",
-    "🌟 Your hair looks fine, but imagine how aerodynamic you could be.",
-    "🎸 Real rockstars never get haircuts. Are you a rockstar?",
-    "📅 Check the moon phase. Mercury is in retrograde. Proceed with caution.",
-    "🐑 Only if you promise not to look like a freshly sheared sheep.",
-    "💸 Yes, but only if you tip the barber in interpretive dance.",
-    "🎪 Embrace the chaos. Get a mullet.",
-    "🧙 The magic 8-ball says: 'Reply hazy, try again after shampooing.'",
-    "🦁 You don't need a haircut. You need a safari hat.",
-    "⚡ Yes! Strike while the scissors are hot!",
-    "🎯 Absolutely not. Growing it out is your current life quest.",
-    "🍕 Only if there's pizza involved afterwards. No pizza = no haircut.",
-    "🎨 Your hair is a masterpiece in progress. Don't interrupt the artist."
+    "Absolutely not. Your hair is perfect. Don't you dare touch it.",
+    "YES. Book it. Your hair has been plotting against you.",
+    "Ask again after you've had coffee. This is too big a decision.",
+    "Your hair called. It said 'please no, we had a good run.'",
+    "Flip a coin. Heads is haircut, Tails is grow it to your ankles.",
+    "According to calculations, you have exactly 3 days before critical hair failure.",
+    "Only if you're ready to commit to the post-haircut selfie.",
+    "It has been too long. The answer is yes.",
+    "Your hair looks fine, but imagine how aerodynamic you could be.",
+    "Real rockstars never get haircuts. Are you a rockstar?",
+    "Check the moon phase. Mercury is in retrograde. Proceed with caution.",
+    "Only if you promise not to look like a freshly sheared sheep.",
+    "Yes, but only if you tip the barber in interpretive dance.",
+    "Embrace the chaos. Get a mullet.",
+    "The magic 8-ball says: 'Reply hazy, try again after shampooing.'",
+    "You don't need a haircut. You need a safari hat.",
+    "Yes. Strike while the scissors are hot.",
+    "Absolutely not. Growing it out is your current life quest.",
+    "Only if there's pizza involved afterwards. No pizza = no haircut.",
+    "Your hair is a masterpiece in progress. Don't interrupt the artist.",
+    # New Esoteric Options
+    "The void whispers 'trim'. Do not ignore the void.",
+    "Your aura is tangled. A haircut is the only spiritual detangler.",
+    "Entropy increases as your hair grows. Reverse the flow.",
+    "The scissors of destiny await your signal.",
+    "Vibrationally, you are too heavy. Shed the weight.",
+    "The ancient texts remain silent on your bangs.",
+    "Do not disturb the natural decay of the universe.",
+    "A haircut is a ritual of sacrifice. Are you prepared?",
+    "The geometry of your current style offends the cosmos.",
+    "Align your physical form with your astral projection. Cut it."
 ]
 
 # Session for appointment checking
@@ -68,6 +79,12 @@ session.headers.update({
 def get_melbourne_time():
     """Get current time in Melbourne timezone."""
     return datetime.datetime.now(MELBOURNE_TZ)
+
+def update_last_check_time():
+    """Updates the global variable with current Melbourne time."""
+    global last_check_string
+    t = get_melbourne_time()
+    last_check_string = t.strftime('%I:%M %p')
 
 def send_message(chat_id, text, reply_markup=None):
     """Send message to a specific chat."""
@@ -88,20 +105,21 @@ def send_message(chat_id, text, reply_markup=None):
         return False
 
 def send_menu(chat_id):
-    """Send menu with inline keyboard buttons."""
+    """Send simple menu with 3 buttons."""
     keyboard = {
         "inline_keyboard": [
             [
-                {"text": "📊 Status", "callback_data": "status"},
-                {"text": "🔍 Check Now", "callback_data": "checknow"}
+                {"text": "bot status", "callback_data": "status"},
+                {"text": "check now", "callback_data": "checknow"}
             ],
             [
-                {"text": "💇‍♂️ Should I Get a Haircut?", "callback_data": "haircut"}
+                {"text": "Should I get a haircut?", "callback_data": "haircut"}
             ]
         ]
     }
     
-    message = "🤖 <b>Hair Appointment Bot</b>\n\nWhat would you like to do?"
+    # Minimal text required by Telegram API
+    message = "." 
     send_message(chat_id, message, reply_markup=keyboard)
 
 def answer_callback(callback_query_id, text):
@@ -119,9 +137,11 @@ def set_service_session(service_id):
     payload = {
         "OnlineBookingMultiServiceEnabled": "True",
         "LocationId": "0",
-        f"ServiceStaffIds[{service_id}]": STAFF_ID,
         "BookableTimeSlotItemIds": service_id
     }
+    # Timely needs this specific format for array parameters
+    payload[f"ServiceStaffIds[{service_id}]"] = STAFF_ID
+    
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
     try:
@@ -261,7 +281,7 @@ def do_slot_check(full_check=False):
 
                     found_any_slots = True
                     nice_date = d_obj.strftime("%d %B")
-                    entry = f"• {nice_date}: {time_str}"
+                    entry = f"{nice_date}: {time_str}"
                     
                     actual_month_name = d_obj.strftime("%B")
                     results[service_name][actual_month_name].append(entry)
@@ -270,21 +290,24 @@ def do_slot_check(full_check=False):
         
         time.sleep(0.5)
     
+    # Update global check time
+    update_last_check_time()
+
     return found_any_slots, results
 
-def format_results_message(results, full_check=False):
-    """Format results into a message."""
-    final_msg = "🚨 <b>Update</b>\n"
+def format_results_simple(results):
+    """Format results simply without emojis."""
+    final_msg = "Updates found:\n"
     
     for service_name, months_data in results.items():
         if months_data:
-            final_msg += f"\n➖➖➖➖➖➖➖➖➖➖\n<b>{service_name}</b>\n"
+            final_msg += f"\n-- {service_name} --\n"
             
             for month_name, entries in months_data.items():
-                final_msg += f"\n📅 <b>{month_name}:</b>\n"
+                final_msg += f"\n{month_name}:\n"
                 final_msg += "\n".join(entries) + "\n"
 
-    final_msg += "\n🔗 <a href='https://bookings.gettimely.com/hairbytaras/book'>Click to Book Now</a>"
+    final_msg += "\nLink: https://bookings.gettimely.com/hairbytaras/book"
     return final_msg
 
 def broadcast_to_users(message):
@@ -305,8 +328,8 @@ def automated_check_loop():
             
             # Only notify if slots are found AND it's a change from last check
             if found_any_slots and not last_slots_found:
-                print("✅ NEW SLOTS FOUND! Notifying users...")
-                message = format_results_message(results)
+                print("NEW SLOTS FOUND! Notifying users...")
+                message = format_results_simple(results)
                 broadcast_to_users(message)
                 last_slots_found = True
             elif not found_any_slots:
@@ -318,11 +341,7 @@ def automated_check_loop():
             # Daily status at 7 PM
             melbourne_time = get_melbourne_time()
             if melbourne_time.hour == 19 and melbourne_time.minute < 2:
-                status_msg = f"✅ <b>Daily Status</b>\n\n"
-                status_msg += f"Bot is running normally.\n"
-                if not found_any_slots:
-                    status_msg += f"No appointments in next 30 days.\n\n"
-                status_msg += f"<i>Last check: {melbourne_time.strftime('%I:%M %p')}</i>"
+                status_msg = f"Daily Report: Bot running. Last check: {last_check_string}"
                 broadcast_to_users(status_msg)
             
         except Exception as e:
@@ -369,37 +388,33 @@ def handle_telegram_updates():
                     active_chat_ids.add(chat_id)
                     
                     if callback_data == 'status':
-                        answer_callback(callback_query_id, "⏳ Getting status...")
+                        answer_callback(callback_query_id, "Getting status...")
                         
-                        melbourne_time = get_melbourne_time()
-                        status_msg = f"✅ <b>Bot Status</b>\n\n"
-                        status_msg += f"🤖 Running normally\n"
-                        status_msg += f"🕐 Current time: {melbourne_time.strftime('%I:%M %p')}\n"
-                        status_msg += f"📅 Checking next 30 days\n"
-                        status_msg += f"🔄 Auto-check every 2 minutes\n\n"
-                        status_msg += f"<i>Active users: {len(active_chat_ids)}</i>"
-                        
+                        # Simple status report with timestamp
+                        status_msg = f"Last checked: {last_check_string}"
                         send_message(chat_id, status_msg)
                         send_menu(chat_id)
                         
                     elif callback_data == 'checknow':
-                        answer_callback(callback_query_id, "🔍 Checking...")
-                        send_message(chat_id, "🔍 <b>Checking next 3 months...</b>\n\n<i>Stand by...</i>")
+                        answer_callback(callback_query_id, "Checking...")
+                        send_message(chat_id, "Checking next 3 months...")
                         
                         found_any_slots, results = do_slot_check(full_check=True)
                         
                         if found_any_slots:
-                            message = format_results_message(results, full_check=True)
+                            message = format_results_simple(results)
                             send_message(chat_id, message)
                         else:
-                            send_message(chat_id, f"❌ <b>No Slots</b>\n\nNo appointments in next 3 months.")
+                            # Simple no slots message
+                            send_message(chat_id, "No slots found in next 3 months.")
                         
                         send_menu(chat_id)
                         
                     elif callback_data == 'haircut':
-                        answer_callback(callback_query_id, "🎱 Consulting...")
+                        answer_callback(callback_query_id, "Consulting...")
                         advice = random.choice(HAIRCUT_ADVICE)
-                        send_message(chat_id, f"💇‍♂️ <b>Should You Get a Haircut?</b>\n\n{advice}")
+                        # Just the advice, no title
+                        send_message(chat_id, advice)
                         send_menu(chat_id)
                 
                 # Handle text messages
@@ -415,6 +430,6 @@ def handle_telegram_updates():
             time.sleep(5)
 
 if __name__ == "__main__":
-    print("🤖 Hair Appointment Bot Starting...")
+    print("Bot Starting...")
     print(f"Checking every {CHECK_INTERVAL} seconds")
     handle_telegram_updates()
