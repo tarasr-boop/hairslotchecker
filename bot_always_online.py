@@ -645,8 +645,10 @@ def do_slot_check(full_check=False):
     
     if found_any:
         last_slot_found_time = get_melbourne_time()
-        last_slots_hash = current_hash
-        save_users()
+        # FIX: Only save if the slots have actually changed
+        if current_hash != last_slots_hash:
+            last_slots_hash = current_hash
+            save_users()
     
     return found_any, results, is_new_slots
 
@@ -716,7 +718,9 @@ def automated_check_loop():
 📅 Last slot: {get_time_since_last_slot()}
 👥 Active users: {len(active_chat_ids)}"""
                 broadcast_slots(report)
-            save_users()
+            
+            # FIX: Removed the unconditional save_users() call here.
+            
         except Exception as e:
             log(f"❌ Error in check loop: {e}")
             consecutive_errors += 1
