@@ -21,7 +21,7 @@ JSONBIN_API_KEY = os.environ.get("JSONBIN_API_KEY", "")
 JSONBIN_BIN_ID = os.environ.get("JSONBIN_BIN_ID", "")
 
 BOT_PASSWORD = "password"
-BUSINESS_ID = "8ab07528-c2a9-463d-a441-3e0aa39a975e"
+BUSINESS_ID = "e5779c5a-328d-448d-bad5-b69f7370db03"
 STAFF_ID = "339008"
 SERVICES = {
     "\U0001F466 Short hair (1 hour)": "1802687:SV",
@@ -157,8 +157,10 @@ def new_booking_session():
     """A fresh session per check, so concurrent checks can't corrupt each other."""
     s = requests.Session()
     s.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "*/*",
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
+        "Accept": "text/html, */*; q=0.01",
+        "Accept-Language": "en-GB,en-AU;q=0.9,en;q=0.8",
         "Origin": "https://book.gettimely.com",
         "Referer": f"https://book.gettimely.com/Booking/Service?obg={BUSINESS_ID}",
         "X-Requested-With": "XMLHttpRequest",
@@ -228,11 +230,14 @@ def get_first_time(s, date_str):
     or None if the request itself failed."""
     try:
         r = s.get(
-            "https://book.gettimely.com/booking/gettimeslots",
+            "https://book.gettimely.com/booking/gettimeslots/",
             params={"obg": BUSINESS_ID, "dateSelected": date_str,
-                    "staffId": "-1", "tzId": "57"},
+                    "staffId": "-1", "tzName": "", "tzId": "57"},
             timeout=15,
         )
+        if "session-timeout" in r.url.lower() or "Session timeout" in r.text:
+            log(f"Session expired while fetching times for {date_str}")
+            return None
         times = re.findall(r"\d{1,2}:\d{2}\s*(?:am|pm)", r.text, re.IGNORECASE)
         if not times:
             return ""
