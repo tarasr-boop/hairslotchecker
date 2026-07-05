@@ -111,7 +111,8 @@ KEYBOARD = {
 
 
 def send_message(chat_id, text, retries=3):
-    """Always sends a NEW message, so Telegram delivers a push notification."""
+    """Always sends a NEW message, so Telegram delivers a push notification.
+    Returns the new message's id, or None on failure."""
     for attempt in range(retries):
         try:
             r = requests.post(
@@ -127,7 +128,7 @@ def send_message(chat_id, text, retries=3):
             )
             result = r.json()
             if result.get("ok"):
-                return True
+                return result["result"]["message_id"]
             error = result.get("description", "unknown error")
             log(f"Send to {chat_id} failed: {error}")
             if "blocked" in error.lower() or "deactivated" in error.lower():
@@ -135,11 +136,35 @@ def send_message(chat_id, text, retries=3):
                     active_chat_ids.discard(chat_id)
                     authenticated_users.discard(chat_id)
                 save_state()
-                return False
+                return None
         except Exception as e:
             log(f"Send error: {e}")
         time.sleep(2 ** attempt)
-    return False
+    return None
+
+
+def delete_message(chat_id, message_id):
+    """Best-effort deletion; ignores errors (e.g. message already gone)."""
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage",
+            json={"chat_id": chat_id, "message_id": message_id},
+            timeout=10,
+        )
+    except Exception as e:
+        log(f"Delete error: {e}")
+
+
+def send_temp_message(chat_id, text, delete_after=45):
+    """Send a message that auto-deletes after `delete_after` seconds, to keep
+    the chat uncluttered. Used for status and other throwaway replies."""
+    msg_id = send_message(chat_id, text)
+    if msg_id:
+        def _expire():
+            time.sleep(delete_after)
+            delete_message(chat_id, msg_id)
+        Thread(target=_expire, daemon=True).start()
+    return msg_id
 
 
 def broadcast(text):
@@ -303,13 +328,15 @@ def hash_slots(results):
     return hashlib.md5("|".join(lines).encode()).hexdigest()
 
 
-def format_results(results):
+def format_results(results, extra_note=None):
     msg = "\U0001F389 <b>Slots found!</b>\n"
     for name, slots in results.items():
         if slots:
             msg += f"\n<b>{name}</b>\n"
             for d, t in sorted(slots):
                 msg += f"\u2022 {d.day} {d.strftime('%B')}: {t}\n"
+    if extra_note:
+        msg += f"\n{extra_note}\n"
     msg += f"\n<a href='{BOOKING_URL}'>\U0001F4C5 Book now</a>"
     return msg
 
@@ -327,7 +354,7 @@ def time_since_last_slot():
 
 # --- COMMAND HANDLERS ---
 def handle_status(chat_id):
-    send_message(chat_id, f"""\U0001F4CA <b>Bot status</b>
+    send_temp_message(chat_id, f"""\U0001F4CA <b>Bot status</b>
 \U0001F916 Status: <b>Running</b>
 \U0001F550 Last check: <b>{last_check_string}</b>
 \U0001F4C5 Last slot: <b>{time_since_last_slot()}</b>
@@ -349,25 +376,32 @@ def split_by_horizon(results, near_days):
 
 
 def handle_check_now(chat_id):
-    send_message(chat_id, f"\U0001F50D <b>Checking the next {MANUAL_CHECK_DAYS} days...</b>")
+    # Transient progress message; deleted once the result is ready.
+    checking_id = send_message(
+        chat_id, f"\U0001F50D <b>Checking the next {MANUAL_CHECK_DAYS} days...</b>")
     # A manual check never touches last_slots_hash, so it can't
     # suppress or duplicate the automatic notifications.
     results = check_slots(MANUAL_CHECK_DAYS)
     near, far = split_by_horizon(results, NEAR_TERM_DAYS)
 
+    far_note = None
+    if far:
+        far_note = (f"There are also slots available between "
+                    f"{NEAR_TERM_DAYS} and {MANUAL_CHECK_DAYS} days from now.")
+
     if near:
-        text = format_results(near)
+        # far_note (no icon) is placed just above the Book now link.
+        text = format_results(near, extra_note=far_note)
     else:
         text = (f"\u274C <b>No slots in the next {NEAR_TERM_DAYS} days</b>\n\n"
                 "I'll notify you automatically when something opens up.")
-
-    if far:
-        text += (f"\n\n\U0001F4C5 There are also slots available between "
-                 f"{NEAR_TERM_DAYS} and {MANUAL_CHECK_DAYS} days from now.")
-        if not near:
+        if far_note:
+            text += f"\n\n{far_note}\n"
             text += f"\n<a href='{BOOKING_URL}'>\U0001F4C5 Book now</a>"
 
     send_message(chat_id, text)
+    if checking_id:
+        delete_message(chat_id, checking_id)
 
 
 def handle_stop(chat_id):
@@ -481,6 +515,10 @@ def telegram_loop():
                 chat_id = msg["chat"]["id"]
                 text = msg.get("text", "").strip()
                 log(f"Message from {chat_id}: '{text}'")
+
+                # Remove the user's incoming message so button taps, commands
+                # and the typed password don't pile up in the chat.
+                delete_message(chat_id, msg["message_id"])
 
                 if chat_id not in authenticated_users:
                     if text == BOT_PASSWORD:
