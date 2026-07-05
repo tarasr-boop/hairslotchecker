@@ -31,9 +31,8 @@ BOOKING_URL = "https://bookings.gettimely.com/hairbytaras/book"
 
 MELBOURNE_TZ = pytz.timezone("Australia/Melbourne")
 CHECK_INTERVAL = 120       # seconds between automatic checks
-AUTO_CHECK_DAYS = 30       # window monitored automatically
+AUTO_CHECK_DAYS = 14       # window monitored automatically
 MANUAL_CHECK_DAYS = 90     # window for "Check Now"
-DAILY_REPORT_HOUR = 19
 
 # --- STATE ---
 state_lock = Lock()        # protects the sets and hash below
@@ -336,16 +335,39 @@ def handle_status(chat_id):
 \U0001F465 Active users: {len(active_chat_ids)}""")
 
 
+NEAR_TERM_DAYS = 30  # boundary between the detailed list and the one-line note
+
+
+def split_by_horizon(results, near_days):
+    today = melbourne_now().date()
+    cutoff = today + datetime.timedelta(days=near_days)
+    near, far = defaultdict(list), defaultdict(list)
+    for name, slots in results.items():
+        for d, t in slots:
+            (near if d <= cutoff else far)[name].append((d, t))
+    return near, far
+
+
 def handle_check_now(chat_id):
     send_message(chat_id, f"\U0001F50D <b>Checking the next {MANUAL_CHECK_DAYS} days...</b>")
     # A manual check never touches last_slots_hash, so it can't
     # suppress or duplicate the automatic notifications.
     results = check_slots(MANUAL_CHECK_DAYS)
-    if results:
-        send_message(chat_id, format_results(results))
+    near, far = split_by_horizon(results, NEAR_TERM_DAYS)
+
+    if near:
+        text = format_results(near)
     else:
-        send_message(chat_id, "\u274C <b>No slots found</b>\n\n"
-                              "I'll notify you automatically when something opens up.")
+        text = (f"\u274C <b>No slots in the next {NEAR_TERM_DAYS} days</b>\n\n"
+                "I'll notify you automatically when something opens up.")
+
+    if far:
+        text += (f"\n\n\U0001F4C5 There are also slots available between "
+                 f"{NEAR_TERM_DAYS} and {MANUAL_CHECK_DAYS} days from now.")
+        if not near:
+            text += f"\n<a href='{BOOKING_URL}'>\U0001F4C5 Book now</a>"
+
+    send_message(chat_id, text)
 
 
 def handle_stop(chat_id):
@@ -367,7 +389,6 @@ def handle_resubscribe(chat_id):
 def auto_check_loop():
     global last_slots_hash, last_slot_found_time, last_check_string
     log("Starting automatic check loop...")
-    last_report_date = None
     while True:
         try:
             results = check_slots(AUTO_CHECK_DAYS)
@@ -390,14 +411,6 @@ def auto_check_loop():
                 log("Slots exist but unchanged")
             else:
                 log("No slots")
-
-            now = melbourne_now()
-            if now.hour == DAILY_REPORT_HOUR and now.date() != last_report_date:
-                last_report_date = now.date()
-                broadcast("\U0001F4CA <b>Daily report</b>\n"
-                          "\U0001F916 Bot running normally\n"
-                          f"\U0001F550 Last check: {last_check_string}\n"
-                          f"\U0001F4C5 Last slot: {time_since_last_slot()}")
         except Exception as e:
             log(f"Error in check loop: {e}")
         time.sleep(CHECK_INTERVAL)
