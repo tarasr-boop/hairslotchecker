@@ -249,27 +249,55 @@ def time_to_minutes(t):
     return hours * 60 + minutes
 
 
-def get_first_time(s, date_str):
-    """Earliest time on a date, '' if the page had no recognisable times,
-    or None if the request itself failed."""
-    try:
-        r = s.get(
-            "https://book.gettimely.com/booking/gettimeslots/",
-            params={"obg": BUSINESS_ID, "dateSelected": date_str,
-                    "staffId": "-1", "tzName": "", "tzId": "57"},
-            timeout=15,
-        )
-        if "session-timeout" in r.url.lower() or "Session timeout" in r.text:
-            log(f"Session expired while fetching times for {date_str}")
-            return None
-        times = re.findall(r"\d{1,2}:\d{2}\s*(?:am|pm)", r.text, re.IGNORECASE)
-        if not times:
-            return ""
-        normalised = {t.replace(" ", "").upper() for t in times}
-        return min(normalised, key=time_to_minutes)
-    except Exception as e:
-        log(f"gettimeslots error for {date_str}: {e}")
-        return None
+def format_minutes(minutes):
+    """Turn minutes-past-midnight into a label like '12:30PM'."""
+    h, m = divmod(minutes, 60)
+    period = "AM" if h < 12 else "PM"
+    h12 = h % 12 or 12
+    return f"{h12}:{m:02d}{period}"
+
+
+def extract_slot_minutes(html):
+    """Collect slot start times (minutes past midnight) from a gettimeslots
+    response, reading BOTH the structured JSON and the visible labels so a
+    partially-rendered page still yields times."""
+    minutes = set()
+    # Structured: "clientTimeOfService":"2026-08-04T12:30:00"
+    for h, m in re.findall(
+            r'clientTimeOfService"\s*:\s*"[\d-]+T(\d{2}):(\d{2})', html):
+        minutes.add(int(h) * 60 + int(m))
+    # Visible labels: 12:30PM / 9:00 am
+    for label in re.findall(r"\d{1,2}:\d{2}\s*(?:am|pm)", html, re.IGNORECASE):
+        minutes.add(time_to_minutes(label.replace(" ", "").upper()))
+    return minutes
+
+
+def get_first_time(s, date_str, attempts=3):
+    """Earliest time on a date. Returns a label like '12:30PM', '' if the page
+    genuinely had no times after every attempt, or None if every request failed.
+    Retries on an empty result, since gettimeslots occasionally returns a
+    partial page that fills in on a second try."""
+    got_response = False
+    for attempt in range(attempts):
+        try:
+            r = s.get(
+                "https://book.gettimely.com/booking/gettimeslots/",
+                params={"obg": BUSINESS_ID, "dateSelected": date_str,
+                        "staffId": "-1", "tzName": "", "tzId": "57"},
+                timeout=15,
+            )
+            if "session-timeout" in r.url.lower() or "Session timeout" in r.text:
+                log(f"Session expired while fetching times for {date_str}")
+                return None
+            got_response = True
+            minutes = extract_slot_minutes(r.text)
+            if minutes:
+                return format_minutes(min(minutes))
+        except Exception as e:
+            log(f"gettimeslots error for {date_str}: {e}")
+        if attempt < attempts - 1:
+            time.sleep(1.0)
+    return "" if got_response else None
 
 
 def months_in_range(start, end):
